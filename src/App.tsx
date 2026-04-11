@@ -102,8 +102,10 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [auditBatchSize, setAuditBatchSize] = useState(8);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const shouldStopProcessingRef = useRef(false);
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   // Check for API key on mount
@@ -523,12 +525,13 @@ export default function App() {
     if (images.length === 0 || !currentPrompt) return;
     setIsProcessingAll(true);
     setShouldStopProcessing(false);
+    shouldStopProcessingRef.current = false;
     
     console.log(`[ImageEditor] Starting batch processing (force=${force})`);
     
     // Process sequentially to avoid rate limits
     for (const image of images) {
-      if (shouldStopProcessing) {
+      if (shouldStopProcessingRef.current) {
         console.log(`[ImageEditor] Batch processing stopped by user`);
         break;
       }
@@ -537,6 +540,7 @@ export default function App() {
       if (force || image.status !== 'done') {
         await processSingleImage(image, currentPrompt);
         // Small delay between requests to be gentle with the API
+        if (shouldStopProcessingRef.current) break;
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
@@ -544,6 +548,7 @@ export default function App() {
     console.log(`[ImageEditor] Batch processing completed/stopped`);
     setIsProcessingAll(false);
     setShouldStopProcessing(false);
+    shouldStopProcessingRef.current = false;
   };
 
   const resetAllStatuses = () => {
@@ -737,22 +742,23 @@ export default function App() {
       }
 
       console.log(`Found ${uniqueParsedSegments.length} unique segments to audit.`);
-      const batchSize = images.length > 0 ? 5 : 15;
-      const totalBatches = Math.ceil(uniqueParsedSegments.length / batchSize);
+      const hasImagesForMatching = images.length > 0;
+      const effectiveBatchSize = hasImagesForMatching ? Math.min(auditBatchSize, 6) : auditBatchSize;
+      const totalBatches = Math.ceil(uniqueParsedSegments.length / effectiveBatchSize);
 
-      // Process in batches of 5 to avoid token limits and provide incremental updates
-      for (let i = 0; i < uniqueParsedSegments.length; i += batchSize) {
-        const currentBatchNum = Math.floor(i / batchSize) + 1;
+      // Process in smaller batches to reduce timeout risk and provide incremental updates
+      for (let i = 0; i < uniqueParsedSegments.length; i += effectiveBatchSize) {
+        const currentBatchNum = Math.floor(i / effectiveBatchSize) + 1;
         setAuditProgress(`${currentBatchNum} / ${totalBatches}`);
         
-        const batchItems = uniqueParsedSegments.slice(i, i + batchSize);
+        const batchItems = uniqueParsedSegments.slice(i, i + effectiveBatchSize);
         const batchText = batchItems.map(item => `${item.id}. ${item.english}`).join('\n\n');
         console.log(`Processing batch ${currentBatchNum} of ${totalBatches}`);
 
         // Create a timeout promise for each batch
         let timeoutId: any;
         const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error("质检请求超时，请尝试分段处理或检查网络。")), 150000);
+          timeoutId = setTimeout(() => reject(new Error(`质检请求超时。建议把“单批段落数”调低后重试，当前批次 ${currentBatchNum}/${totalBatches}。`)), 90000);
         });
 
         const auditPromise = callWithRetry(() => ai.models.generateContent({
@@ -764,6 +770,11 @@ export default function App() {
           
           质检要求：
           ${activeInstructions}
+
+          输出要求：
+          - 仅返回 JSON 数组
+          - 不要附加解释、markdown 代码块或说明文字
+          - 每条结果只保留必要字段
           
           特别注意：
           1. 识别以自然数字（1, 2, 3...）开头的段落。
@@ -850,8 +861,8 @@ export default function App() {
         }
       }
 
-      // If images are present, trigger matching after all audit batches are done
-      if (images.length > 0) {
+      // Only auto-match when user explicitly enabled it
+      if (images.length > 0 && autoMatchWithImages) {
         await matchImagesWithCopy();
       }
     } catch (error: any) {
@@ -1064,37 +1075,52 @@ export default function App() {
     }
   };
 
+  const triggerDownload = (url: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const downloadSelected = () => {
     images.forEach(img => {
       if (selectedIds.has(img.id)) {
-        const link = document.createElement('a');
-        link.href = img.result || img.original;
-        
-        // Use suggestedName (sequence number) if available, otherwise original name
         let fileName = img.suggestedName ? `${img.suggestedName}.png` : img.name;
-        
-        // Add folder prefix if specified
         if (downloadFolder) {
           fileName = `${downloadFolder}/${fileName}`;
         }
-        
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        triggerDownload(img.result || img.original, fileName);
       }
     });
+  };
+
+  const downloadImage = (img: ImageItem) => {
+    const fileName = img.suggestedName ? `${img.suggestedName}.png` : (img.result ? `edited-${img.name}` : img.name);
+    triggerDownload(img.result || img.original, fileName);
+  };
+
+  const deleteSelectedImages = () => {
+    if (selectedIds.size === 0) return;
+    setImages(prev => prev.filter(img => !selectedIds.has(img.id)));
+    if (selectedImageId && selectedIds.has(selectedImageId)) {
+      setSelectedImageId(null);
+      setViewMode('grid');
+    }
+    setSelectedIds(new Set());
   };
 
   const batchProcessAndDownload = async () => {
     if (images.length === 0) return;
     setIsProcessingAll(true);
     setShouldStopProcessing(false);
+    shouldStopProcessingRef.current = false;
     
     const downloadQueue: { url: string; fileName: string }[] = [];
 
     for (const image of images) {
-      if (shouldStopProcessing) break;
+      if (shouldStopProcessingRef.current) break;
       
       let finalUrl = image.original;
       let fileName = image.suggestedName ? `${image.suggestedName}.png` : image.name;
@@ -1105,6 +1131,8 @@ export default function App() {
         if (resultUrl) finalUrl = resultUrl;
       }
       
+      if (shouldStopProcessingRef.current) break;
+
       // Add folder prefix if specified
       if (downloadFolder) {
         fileName = `${downloadFolder}/${fileName}`;
@@ -1117,6 +1145,8 @@ export default function App() {
     }
     
     setIsProcessingAll(false);
+    setShouldStopProcessing(false);
+    shouldStopProcessingRef.current = false;
     
     // Trigger downloads
     downloadQueue.forEach(item => {
@@ -1297,41 +1327,40 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
+      className="min-h-screen text-neutral-900 font-sans selection:bg-blue-100 p-4 md:p-6"
     >
-      {/* Top Navigation Bar */}
-      <header className="h-20 bg-white border-b border-neutral-200 flex items-center justify-center px-6 z-40 shrink-0">
-        <div className="flex items-center gap-16">
-          {[
-            { id: 'match', name: '文案匹配', icon: <Type className="w-5 h-5" /> },
-            { id: 'edit', name: 'AI 修图', icon: <Wand2 className="w-5 h-5" /> },
-          ].map(module => (
-            <button
-              key={module.id}
-              onClick={() => setActiveModule(module.id as any)}
-              className={`flex flex-col items-center gap-1.5 transition-all group relative py-1 ${
-                activeModule === module.id ? 'text-blue-600' : 'text-neutral-400 hover:text-neutral-600'
-              }`}
-            >
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                activeModule === module.id ? 'bg-blue-600 text-white shadow-xl shadow-blue-100' : 'bg-neutral-50 group-hover:bg-neutral-100'
-              }`}>
-                {module.icon}
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-widest">{module.name}</span>
-              {activeModule === module.id && (
-                <motion.div 
-                  layoutId="activeTabIndicator"
-                  className="absolute -bottom-2 left-0 right-0 h-1 bg-blue-600 rounded-full"
-                />
-              )}
-            </button>
-          ))}
-        </div>
-      </header>
+      <div className="app-shell flex-1 flex overflow-hidden relative">
+        <aside className="w-[88px] border-r border-[#edf2f9] bg-white/72 backdrop-blur-xl flex flex-col items-center py-6 px-3 gap-4 shrink-0">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400 via-sky-400 to-blue-500 text-white flex items-center justify-center shadow-lg shadow-cyan-100 font-black text-lg">A</div>
+          <div className="flex flex-col gap-3 w-full items-center">
+            {[
+              { id: 'match', name: '文案', icon: <Type className="w-5 h-5" /> },
+              { id: 'edit', name: '修图', icon: <Wand2 className="w-5 h-5" /> },
+            ].map(module => (
+              <button
+                key={module.id}
+                onClick={() => setActiveModule(module.id as any)}
+                className={`nav-pill w-full flex flex-col items-center gap-2 px-2 py-3 ${
+                  activeModule === module.id
+                    ? 'bg-cyan-50 text-cyan-600 shadow-[0_8px_20px_rgba(34,211,238,0.18)]'
+                    : 'text-neutral-400 hover:bg-neutral-50 hover:text-neutral-700'
+                }`}
+              >
+                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
+                  activeModule === module.id ? 'bg-gradient-to-br from-cyan-400 to-blue-500 text-white' : 'bg-white border border-neutral-200'
+                }`}>
+                  {module.icon}
+                </div>
+                <span className="text-[11px] font-bold">{module.name}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-auto w-12 h-12 rounded-full border-2 border-cyan-300 flex items-center justify-center text-cyan-500 bg-white shadow-sm">🙂</div>
+        </aside>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* API Key Selection Overlay */}
+        <div className="flex-1 flex overflow-hidden relative">
+          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-cyan-50/70 via-white/40 to-sky-50/70 pointer-events-none" />
+          {/* API Key Selection Overlay */}
         {hasApiKey === false && (
           <div className="absolute inset-0 z-50 bg-white/90 backdrop-blur-md flex items-center justify-center p-6 text-center">
             <motion.div 
@@ -1369,8 +1398,8 @@ export default function App() {
         )}
 
         {/* Left Sidebar: Skills & Queue */}
-        {activeModule !== 'audit' && (
-          <aside className={`${isSidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-80 opacity-100'} border-r border-neutral-200 bg-white flex flex-col shrink-0 z-20 transition-all duration-300 relative`}>
+        {(
+          <aside className={`${isSidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-[320px] opacity-100'} border-r border-[#edf2f9] bg-white/76 backdrop-blur-xl flex flex-col shrink-0 z-20 transition-all duration-300 relative`}>
             {/* Collapse Button */}
             <button 
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -1381,8 +1410,13 @@ export default function App() {
             </button>
 
             {/* Sidebar Tabs */}
-            <div className="flex border-b border-neutral-100">
-              <button 
+            <div className="px-5 pt-6 pb-4 border-b border-[#edf2f9] bg-white/60">
+              <div className="mb-4">
+                <h1 className="text-[28px] font-bold tracking-tight text-neutral-900">AvatarReels</h1>
+                <p className="text-xs text-neutral-400 mt-1">AI 文案质检、图片匹配与修图工作台</p>
+              </div>
+              <div className="flex bg-[#f4f8fd] p-1 rounded-2xl border border-[#e7eef8]">
+                <button 
                 onClick={() => setSidebarTab('match')}
                 className={`flex-1 py-4 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${
                   sidebarTab === 'match' ? 'border-blue-600 text-blue-600 bg-blue-50/30' : 'border-transparent text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50/50'
@@ -1390,19 +1424,31 @@ export default function App() {
               >
                 匹配设置
               </button>
-              <button 
-                onClick={() => setSidebarTab('queue')}
-                className={`flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 ${
-                  sidebarTab === 'queue' ? 'border-blue-600 text-blue-600 bg-blue-50/30' : 'border-transparent text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50/50'
-                }`}
-              >
-                技能 & 队列
-              </button>
+                <button 
+                  onClick={() => setSidebarTab('queue')}
+                  className={`flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 ${
+                    sidebarTab === 'queue' ? 'border-blue-600 text-blue-600 bg-blue-50/30' : 'border-transparent text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50/50'
+                  }`}
+                >
+                  技能 & 队列
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               {sidebarTab === 'match' ? (
                 <div className="p-5 space-y-6">
+                  <div className="subtle-panel p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-500 text-white flex items-center justify-center shadow-sm">
+                        <Type className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-800">当前工作流</p>
+                        <p className="text-[11px] text-neutral-400 leading-relaxed">推荐先完成文案质检，再决定是否执行图片匹配与 AI 修图。</p>
+                      </div>
+                    </div>
+                  </div>
                   {/* Engine & Key */}
                   <div className="space-y-3">
                     <h2 className="text-[10px] font-black text-neutral-400 uppercase tracking-widest flex items-center gap-2">
@@ -1537,7 +1583,21 @@ export default function App() {
                     <button
                       onClick={() => {
                         if (window.confirm('确定要清除所有已输入的数据、图片和质检结果吗？此操作不可撤销。')) {
-                          localStorage.clear();
+                          [
+                            'copy-matcher-copywriting',
+                            'copy-matcher-audit-results',
+                            'copy-matcher-audit-options',
+                            'copy-matcher-audit-instructions',
+                            'copy-matcher-matching-rules',
+                            'copy-matcher-auto-match',
+                            'copy-matcher-auto-optimize',
+                            'copy-matcher-engine',
+                            'copy-matcher-model',
+                            'copy-matcher-images',
+                            'image-editor-skills',
+                            'openrouter-api-key',
+                            'gemini-api-key'
+                          ].forEach(key => localStorage.removeItem(key));
                           window.location.reload();
                         }
                       }}
@@ -1551,7 +1611,7 @@ export default function App() {
               ) : (
                 <div className="flex flex-col h-full">
                   {/* Pro Tools (Merged from Lab) */}
-                  <div className="p-5 border-b border-neutral-100 bg-neutral-50/30">
+                  <div className="p-5 border-b border-[#edf2f9] bg-[#fbfdff]">
                     <h2 className="text-[10px] font-black text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2">
                       <Wand2 className="w-3 h-3" />
                       实验室 Pro 技能
@@ -1579,7 +1639,7 @@ export default function App() {
                   </div>
 
                   {/* Custom Skills Section */}
-                  <div className="p-5 border-b border-neutral-100">
+                  <div className="p-5 border-b border-[#edf2f9] bg-white/50">
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">自定义技能</h2>
                       <button 
@@ -1626,7 +1686,7 @@ export default function App() {
 
                   {/* Queue Section */}
                   <div className="flex-1 flex flex-col min-h-0">
-                    <div className="p-5 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
+                    <div className="p-5 border-b border-[#edf2f9] flex items-center justify-between bg-[#fbfdff]">
                       <h2 className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">图片队列 ({images.length})</h2>
                       <button onClick={() => fileInputRef.current?.click()} className="text-blue-600">
                         <Plus className="w-4 h-4" />
@@ -1665,15 +1725,15 @@ export default function App() {
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 flex flex-col bg-neutral-50 overflow-hidden">
+        <main className="flex-1 flex flex-col bg-transparent overflow-hidden">
           {activeModule === 'match' ? (
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-              <div className="max-w-4xl mx-auto space-y-8">
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto space-y-6">
                 {/* Audit & Match Section */}
-                <div className="bg-white rounded-[2.5rem] border border-neutral-200 shadow-xl shadow-neutral-100 overflow-hidden">
-                  <div className="p-8 border-b border-neutral-100 bg-neutral-50/50 flex items-center justify-between">
+                <div className="soft-panel overflow-hidden">
+                  <div className="p-8 border-b border-[#edf2f9] bg-gradient-to-r from-white via-cyan-50/30 to-sky-50/40 flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-100">
+                      <div className="w-12 h-12 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-cyan-100">
                         <Type className="text-white w-6 h-6" />
                       </div>
                       <div>
@@ -1695,10 +1755,10 @@ export default function App() {
                         onChange={(e) => setCopywriting(e.target.value)}
                         onPaste={handlePaste}
                         placeholder="1 中文内容 English content...&#10;2 中文内容 English content..."
-                        className={`w-full h-64 px-6 py-4 rounded-3xl border focus:ring-4 outline-none text-base leading-relaxed resize-none font-mono transition-all duration-500 ${
+                        className={`w-full h-72 px-6 py-5 rounded-[2rem] border focus:ring-4 outline-none text-base leading-relaxed resize-none font-mono transition-all duration-500 shadow-inner ${
                           isPasted 
                             ? 'bg-green-50 border-green-400 ring-green-500/20 text-green-800' 
-                            : 'bg-neutral-50/50 border-neutral-200 focus:ring-blue-500/10 focus:border-blue-500'
+                            : 'bg-[#f9fbff] border-[#dfe8f4] focus:ring-cyan-500/10 focus:border-cyan-400'
                         }`}
                       />
                     </div>
@@ -1716,12 +1776,12 @@ export default function App() {
                           onClick={() => toggleAuditOption(opt.id)}
                           className={`p-4 rounded-2xl border text-left transition-all relative group ${
                             selectedAuditOptions.has(opt.id) 
-                              ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/5' 
-                              : 'bg-white border-neutral-100 hover:border-neutral-200'
+                              ? 'bg-cyan-50 border-cyan-200 ring-2 ring-cyan-500/5 shadow-sm' 
+                              : 'bg-white border-[#edf2f9] hover:border-[#d9e6f5]'
                           }`}
                         >
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 transition-all ${
-                            selectedAuditOptions.has(opt.id) ? 'bg-blue-600 text-white' : 'bg-neutral-50 text-neutral-400'
+                            selectedAuditOptions.has(opt.id) ? 'bg-gradient-to-br from-cyan-400 to-blue-500 text-white' : 'bg-neutral-50 text-neutral-400'
                           }`}>
                             <Type className="w-4 h-4" />
                           </div>
@@ -1738,7 +1798,27 @@ export default function App() {
                     </div>
 
                     {/* Custom Prompt */}
-                    <div className="p-6 bg-neutral-50 rounded-3xl border border-neutral-100 space-y-4">
+                    <div className="p-6 subtle-panel space-y-4">
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-100 to-blue-100 flex items-center justify-center text-cyan-600">
+                            <ShieldCheck className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-neutral-800">质检执行策略</p>
+                            <p className="text-[11px] text-neutral-400">建议先质检，再按需单独触发图片匹配，整体更稳。</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 bg-white border border-[#dfe8f4] px-3 py-2 rounded-2xl shadow-sm">
+                          <span className="text-[10px] font-bold text-neutral-400">自动匹配</span>
+                          <button
+                            onClick={() => setAutoMatchWithImages(!autoMatchWithImages)}
+                            className={`w-12 h-7 rounded-full transition-all relative ${autoMatchWithImages ? 'bg-gradient-to-r from-cyan-400 to-blue-500' : 'bg-neutral-200'}`}
+                          >
+                            <span className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${autoMatchWithImages ? 'left-6' : 'left-1'}`} />
+                          </button>
+                        </div>
+                      </div>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Wand2 className="w-4 h-4 text-blue-600" />
@@ -1768,7 +1848,7 @@ export default function App() {
                         className={`flex-[3] py-5 rounded-[2rem] font-bold flex items-center justify-center gap-3 transition-all shadow-xl active:scale-[0.98] ${
                           isAuditing || isMatching || !copywriting
                             ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none'
-                            : 'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-blue-200 shadow-blue-100'
+                            : 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white hover:opacity-95 hover:shadow-cyan-100 shadow-cyan-100'
                         }`}
                       >
                         {isAuditing ? (
@@ -1784,7 +1864,7 @@ export default function App() {
                         ) : (
                           <>
                             <ShieldCheck className="w-6 h-6" />
-                            {images.length > 0 ? '开始质检 & 匹配' : '开始质检'}
+                            {images.length > 0 && autoMatchWithImages ? '开始质检并自动匹配' : '开始质检'}
                           </>
                         )}
                       </button>
@@ -1835,7 +1915,7 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-4"
                   >
-                    <div className="flex items-center justify-between px-4">
+                    <div className="flex items-center justify-between px-4 flex-wrap gap-3">
                       <div className="flex flex-col">
                         <h3 className="text-sm font-bold text-neutral-800 flex items-center gap-2">
                           <CheckCircle2 className="w-5 h-5 text-green-500" />
@@ -1845,7 +1925,19 @@ export default function App() {
                           <span className="text-[9px] text-neutral-400 mt-0.5">上次自动保存: {lastSaved}</span>
                         )}
                       </div>
-                      <div className="flex gap-4">
+                      <div className="flex flex-wrap gap-3 items-center">
+                        <div className="flex items-center gap-2 bg-white border border-[#dfe8f4] px-3 py-2 rounded-2xl shadow-sm">
+                          <span className="text-[10px] font-bold text-neutral-400">单批段落数</span>
+                          <select
+                            value={auditBatchSize}
+                            onChange={(e) => setAuditBatchSize(Number(e.target.value))}
+                            className="text-[10px] font-bold text-neutral-700 outline-none bg-transparent"
+                          >
+                            {[3, 5, 8, 10, 12].map(size => (
+                              <option key={size} value={size}>{size}</option>
+                            ))}
+                          </select>
+                        </div>
                         <button 
                           onClick={() => exportAuditResults('tsv')}
                           className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5"
@@ -1962,7 +2054,7 @@ export default function App() {
           ) : (
             <>
               {/* Global Prompt Bar */}
-              <div className="p-4 bg-white border-b border-neutral-200 shadow-sm z-10">
+              <div className="p-4 bg-white/72 backdrop-blur-xl border-b border-[#edf2f9] shadow-sm z-10">
                 <div className="max-w-[1800px] mx-auto flex gap-4 items-center">
                   {isSidebarCollapsed && (
                     <button 
@@ -1976,7 +2068,7 @@ export default function App() {
                     <textarea
                       value={currentPrompt}
                       onChange={(e) => setCurrentPrompt(e.target.value)}
-                      placeholder={activeModule === 'match' ? "输入匹配逻辑或修图指令..." : "输入修图指令，例如：提亮背景并增强人物细节..."}
+                      placeholder={"输入修图指令，例如：提亮背景并增强人物细节..."}
                       className="w-full h-12 px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none text-sm leading-relaxed pr-10"
                     />
                     <div className="absolute right-3 top-3.5 text-neutral-300">
@@ -1986,7 +2078,10 @@ export default function App() {
                   <div className="flex gap-2">
                     {isProcessingAll ? (
                       <button 
-                        onClick={() => setShouldStopProcessing(true)}
+                        onClick={() => {
+                          setShouldStopProcessing(true);
+                          shouldStopProcessingRef.current = true;
+                        }}
                         className="px-6 h-12 rounded-xl font-bold flex items-center justify-center gap-2 transition-all bg-red-50 text-red-600 hover:bg-red-100"
                       >
                         <X className="w-5 h-5" />
@@ -2015,7 +2110,7 @@ export default function App() {
               {viewMode === 'grid' ? (
                 <div className="flex-1 flex flex-col overflow-hidden">
                   {/* Grid Header */}
-                  <div className="px-8 py-4 flex items-center justify-between bg-neutral-50/50 border-b border-neutral-200">
+                  <div className="px-8 py-5 flex items-center justify-between bg-white/60 border-b border-[#edf2f9] backdrop-blur-sm">
                     <div className="flex items-center gap-6">
                       <button 
                         onClick={toggleSelectAll}
@@ -2038,6 +2133,22 @@ export default function App() {
                           className="text-[10px] font-bold text-neutral-700 outline-none w-24"
                         />
                       </div>
+                      <button 
+                        onClick={downloadSelected}
+                        disabled={selectedIds.size === 0}
+                        className="px-4 py-2 bg-white border border-neutral-200 text-neutral-700 rounded-xl text-xs font-bold hover:border-blue-300 hover:text-blue-600 transition-all flex items-center gap-2 shadow-sm disabled:opacity-40"
+                      >
+                        <Download className="w-4 h-4" />
+                        下载已选
+                      </button>
+                      <button 
+                        onClick={deleteSelectedImages}
+                        disabled={selectedIds.size === 0}
+                        className="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-xl text-xs font-bold hover:bg-red-50 transition-all flex items-center gap-2 shadow-sm disabled:opacity-40"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        删除已选
+                      </button>
                       <button 
                         onClick={batchProcessAndDownload}
                         disabled={isProcessingAll || images.length === 0}
@@ -2071,7 +2182,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="max-w-[1600px] mx-auto space-y-8">
-                        <div className={`grid gap-8 ${
+                        <div className={`grid gap-6 ${
                           gridSize === 'sm' ? 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6' :
                           gridSize === 'md' ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' :
                           'grid-cols-1 md:grid-cols-2'
@@ -2081,16 +2192,32 @@ export default function App() {
                               key={img.id}
                               layout
                               whileHover={{ y: -8, transition: { duration: 0.2 } }}
-                              className="bg-white rounded-3xl border border-neutral-200 shadow-sm overflow-hidden group hover:shadow-2xl hover:border-blue-200 transition-all flex flex-col"
+                              className="soft-panel overflow-hidden group hover:shadow-[0_18px_40px_rgba(15,23,42,0.10)] hover:border-cyan-200 transition-all flex flex-col"
                             >
                               {/* Image Area */}
-                              <div className="aspect-square relative bg-neutral-100 overflow-hidden cursor-pointer" onClick={() => { setSelectedImageId(img.id); setViewMode('edit'); }}>
+                              <div className="aspect-square relative bg-gradient-to-br from-neutral-100 to-neutral-200 overflow-hidden cursor-pointer" onClick={() => { setSelectedImageId(img.id); setViewMode('edit'); }}>
                                 <img 
                                   src={img.result || img.original} 
                                   className="w-full h-full object-contain" 
                                   referrerPolicy="no-referrer" 
                                 />
                                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all flex items-center justify-center">
+                                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); downloadImage(img); }}
+                                      className="p-2 bg-white/90 backdrop-blur-sm rounded-xl shadow-md hover:scale-105 transition-all"
+                                      title="下载图片"
+                                    >
+                                      <Download className="w-4 h-4 text-blue-600" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); removeImage(img.id); }}
+                                      className="p-2 bg-white/90 backdrop-blur-sm rounded-xl shadow-md hover:scale-105 transition-all"
+                                      title="删除图片"
+                                    >
+                                      <Trash2 className="w-4 h-4 text-red-500" />
+                                    </button>
+                                  </div>
                                   <Wand2 className="text-white opacity-0 group-hover:opacity-100 w-8 h-8 transition-all" />
                                 </div>
                                 <button 
@@ -2183,7 +2310,7 @@ export default function App() {
               ) : (
                 <div className="flex-1 flex flex-col overflow-hidden">
                   {/* Edit Header */}
-                  <div className="p-6 bg-white border-b border-neutral-200 flex items-center justify-between shadow-sm z-10">
+                  <div className="p-6 bg-white/72 backdrop-blur-xl border-b border-[#edf2f9] flex items-center justify-between shadow-sm z-10">
                     <button 
                       onClick={() => setViewMode('grid')}
                       className="flex items-center gap-2 text-sm font-bold text-neutral-600 hover:text-blue-600 transition-colors"
@@ -2247,20 +2374,20 @@ export default function App() {
                           <div className="space-y-3">
                             <div className="flex items-center justify-between px-2">
                               <span className="text-[10px] font-black text-blue-500 uppercase tracking-[0.2em]">处理结果</span>
-                              {selectedImage.result && (
+                              <div className="flex items-center gap-2">
                                 <button 
-                                  onClick={() => {
-                                    const link = document.createElement('a');
-                                    link.href = selectedImage.result!;
-                                    const fileName = selectedImage.suggestedName ? `${selectedImage.suggestedName}.png` : `edited-${selectedImage.name}`;
-                                    link.download = fileName;
-                                    link.click();
-                                  }}
+                                  onClick={() => downloadImage(selectedImage)}
                                   className="text-blue-600 hover:text-blue-700 text-[10px] font-bold flex items-center gap-1 bg-blue-50 px-3 py-1 rounded-full transition-all"
                                 >
-                                  <Download className="w-3 h-3" /> 下载高清原图
+                                  <Download className="w-3 h-3" /> 下载单张
                                 </button>
-                              )}
+                                <button 
+                                  onClick={() => removeImage(selectedImage.id)}
+                                  className="text-red-600 hover:text-red-700 text-[10px] font-bold flex items-center gap-1 bg-red-50 px-3 py-1 rounded-full transition-all"
+                                >
+                                  <Trash2 className="w-3 h-3" /> 删除单张
+                                </button>
+                              </div>
                             </div>
                             <div className="aspect-square md:aspect-auto md:h-[820px] bg-white rounded-[2rem] border border-neutral-200 shadow-sm overflow-hidden flex items-center justify-center p-2 relative group">
                               {selectedImage.status === 'processing' ? (
@@ -2555,6 +2682,7 @@ export default function App() {
           background: #d1d5db;
         }
       `}</style>
+      </div>
     </div>
   );
 }

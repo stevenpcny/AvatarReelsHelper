@@ -14,11 +14,28 @@
   }
   
   body {
-    @apply bg-[#FBFBFB] text-neutral-900 font-sans;
+    @apply bg-[#f6f8fc] text-neutral-900 font-sans;
+    background-image: radial-gradient(circle at top left, rgba(86, 191, 255, 0.08), transparent 28%), radial-gradient(circle at top right, rgba(143, 216, 255, 0.10), transparent 24%);
   }
 }
 
 @layer components {
+  .app-shell {
+    @apply min-h-screen bg-white/70 backdrop-blur-2xl border border-white/60 shadow-[0_20px_60px_rgba(15,23,42,0.08)] rounded-[2rem];
+  }
+
+  .soft-panel {
+    @apply bg-white/88 backdrop-blur-xl border border-white/70 shadow-[0_10px_35px_rgba(15,23,42,0.06)] rounded-[2rem];
+  }
+
+  .subtle-panel {
+    @apply bg-[#f9fbff] border border-[#e7eef8] rounded-[1.5rem];
+  }
+
+  .nav-pill {
+    @apply rounded-[1.25rem] transition-all duration-200;
+  }
+
   .apple-blur {
     @apply backdrop-blur-xl bg-white/70;
   }
