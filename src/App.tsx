@@ -33,13 +33,34 @@ interface Skill {
   prompt: string;
 }
 
+// Environment Variable Parsing Helper
+// Type-safe and resilient to both Vite (import.meta.env) and Node (process.env) injection.
+const getEnvStr = (key: string): string => {
+  // 1. Prioritize Vite's import.meta.env
+  // Need to bypass strict import.meta typing dynamically to avoid TS error
+  const metaObj = import.meta as unknown as Record<string, unknown>;
+  if (typeof metaObj !== 'undefined' && metaObj.env) {
+    const env = metaObj.env as Record<string, string | undefined>;
+    if (env[key]) return env[key]!;
+    if (env[`VITE_${key}`]) return env[`VITE_${key}`]!;
+  }
+  // 2. Fallback to process.env safely (e.g., AI Studio backend injection/build time)
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env[key]) return process.env[key]!;
+  }
+  return '';
+};
+
+const SYSTEM_GEMINI_KEY = getEnvStr('GEMINI_API_KEY') || getEnvStr('API_KEY');
+const SYSTEM_OPENROUTER_KEY = getEnvStr('OPENROUTER_API_KEY');
+
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
 
   // Initialize Gemini AI
   const getAIInstance = () => {
-    const key = geminiApiKey || process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    const key = geminiApiKey || SYSTEM_GEMINI_KEY;
     return new GoogleGenAI({ apiKey: key });
   };
   const [currentPrompt, setCurrentPrompt] = useState('');
@@ -1280,7 +1301,7 @@ export default function App() {
             return JSON.parse(response.text);
           } else {
             // OpenRouter Logic... (Keep existing)
-            const apiKey = openRouterApiKey || process.env.OPENROUTER_API_KEY;
+            const apiKey = openRouterApiKey || SYSTEM_OPENROUTER_KEY;
             if (!apiKey) throw new Error("请先填写 OpenRouter API Key");
             const contentParts: any[] = [ { type: "text", text: prompt } ];
             currentImagesBatch.forEach(img => {
