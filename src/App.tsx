@@ -36,10 +36,14 @@ interface Skill {
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const env = (import.meta as any).env ?? {};
+  const fallbackProcessEnv = typeof process !== 'undefined' ? process.env ?? {} : {};
+  const defaultGeminiApiKey = env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || fallbackProcessEnv.GEMINI_API_KEY || fallbackProcessEnv.API_KEY || '';
+  const defaultOpenRouterApiKey = env.VITE_OPENROUTER_API_KEY || env.OPENROUTER_API_KEY || fallbackProcessEnv.OPENROUTER_API_KEY || '';
 
   // Initialize Gemini AI
   const getAIInstance = () => {
-    const key = geminiApiKey || process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    const key = geminiApiKey || defaultGeminiApiKey;
     return new GoogleGenAI({ apiKey: key });
   };
   const [currentPrompt, setCurrentPrompt] = useState('');
@@ -1280,7 +1284,7 @@ export default function App() {
             return JSON.parse(response.text);
           } else {
             // OpenRouter Logic... (Keep existing)
-            const apiKey = openRouterApiKey || process.env.OPENROUTER_API_KEY;
+            const apiKey = openRouterApiKey || defaultOpenRouterApiKey;
             if (!apiKey) throw new Error("请先填写 OpenRouter API Key");
             const contentParts: any[] = [ { type: "text", text: prompt } ];
             currentImagesBatch.forEach(img => {
