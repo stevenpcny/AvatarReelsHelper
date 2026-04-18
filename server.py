@@ -23,15 +23,15 @@ vertexai.init(project=PROJECT, location=LOCATION)
 # The backend tries each model in order until one succeeds.
 MODEL_FALLBACKS: dict[str, list[str]] = {
     # Image generation
-    "gemini-3.1-flash-image-preview": ["gemini-2.0-flash-exp", "gemini-2.0-flash-001"],
-    "gemini-2.5-flash-image":         ["gemini-2.0-flash-exp", "gemini-2.0-flash-001"],
+    "gemini-3.1-flash-image-preview": ["gemini-2.0-flash-exp", "gemini-1.5-flash-001"],
+    "gemini-2.5-flash-image":         ["gemini-2.0-flash-exp", "gemini-1.5-flash-001"],
     # Text / audit / matching
-    "gemini-3-flash-preview":         ["gemini-2.5-flash-preview-04-17", "gemini-2.0-flash-001"],
-    "gemini-3.0-flash-preview":       ["gemini-2.5-flash-preview-04-17", "gemini-2.0-flash-001"],
+    "gemini-3-flash-preview":         ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
+    "gemini-3.0-flash-preview":       ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
     # Already-valid Vertex AI names — still provide a fallback
-    "gemini-2.0-flash-001":           ["gemini-2.0-flash-001"],
-    "gemini-1.5-flash-8b":            ["gemini-2.0-flash-001"],
-    "gemini-1.5-flash-8b-001":        ["gemini-2.0-flash-001"],
+    "gemini-2.0-flash-001":           ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
+    "gemini-1.5-flash-8b":            ["gemini-1.5-flash-001"],
+    "gemini-1.5-flash-8b-001":        ["gemini-1.5-flash-001"],
 }
 
 app = FastAPI()
