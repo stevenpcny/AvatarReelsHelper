@@ -32,23 +32,106 @@ interface Skill {
   prompt: string;
 }
 
+// ── Login screen ─────────────────────────────────────────────────────────────
+function LoginScreen({ onSuccess }: { onSuccess: (token: string) => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) throw new Error('访问码错误，请重试');
+      const data = await res.json();
+      localStorage.setItem('access-token', data.token);
+      onSuccess(data.token);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-neutral-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-neutral-800 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <ShieldCheck className="w-8 h-8 text-neutral-300" />
+          </div>
+          <h1 className="text-white text-2xl font-bold">口播工具</h1>
+          <p className="text-neutral-500 text-sm mt-1">请输入访问码继续</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="password"
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            placeholder="访问码"
+            autoFocus
+            className="w-full px-4 py-3 bg-neutral-800 text-white rounded-xl border border-neutral-700 focus:outline-none focus:border-neutral-500 placeholder-neutral-600 text-center text-lg tracking-widest"
+          />
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          <button
+            type="submit"
+            disabled={loading || !code}
+            className="w-full py-3 bg-white text-black rounded-xl font-semibold hover:bg-neutral-200 transition-all disabled:opacity-40"
+          >
+            {loading ? '验证中...' : '进入'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Main app ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [accessToken, setAccessToken] = useState<string | null>(
+    () => localStorage.getItem('access-token')
+  );
+
+  // Verify stored token on mount
+  useEffect(() => {
+    const token = localStorage.getItem('access-token');
+    if (!token) return;
+    fetch('/api/auth/check', { headers: { 'x-access-token': token } })
+      .then(r => { if (!r.ok) { localStorage.removeItem('access-token'); setAccessToken(null); } })
+      .catch(() => {});
+  }, []);
 
   // Call the Python backend which uses Vertex AI SDK (no API key needed on Cloud Run)
   const callGenerateAPI = async (model: string, contents: any, config?: any): Promise<any> => {
+    const token = localStorage.getItem('access-token') || '';
     const res = await fetch('/api/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-access-token': token },
       body: JSON.stringify({ model, contents, config }),
     });
+    if (res.status === 401) {
+      localStorage.removeItem('access-token');
+      setAccessToken(null);
+      throw new Error('登录已过期，请重新输入访问码');
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || `API error ${res.status}`);
     }
     return res.json();
   };
+
+  if (!accessToken) {
+    return <LoginScreen onSuccess={setAccessToken} />;
+  }
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [shouldStopProcessing, setShouldStopProcessing] = useState(false);

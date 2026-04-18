@@ -5,12 +5,14 @@ Also serves the compiled React frontend from ./dist.
 """
 
 import base64
+import hashlib
 import os
+import secrets
 from typing import Any, Optional
 
 from google import genai
 from google.genai import types
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,16 +25,22 @@ client = genai.Client(vertexai=True, project=PROJECT, location=LOCATION)
 # ── Model fallback chains (frontend name → ordered Vertex AI model list) ─────
 MODEL_FALLBACKS: dict[str, list[str]] = {
     # Image generation
-    "gemini-3.1-flash-image-preview": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-    "gemini-2.5-flash-image":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-3.1-flash-image-preview": ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-2.5-flash-image":         ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
     # Text / audit / matching
-    "gemini-3-flash-preview":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-    "gemini-3.0-flash-preview":       ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-3-flash-preview":         ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-3.0-flash-preview":       ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
     # Already-valid names — still provide fallback
-    "gemini-2.0-flash-001":           ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-    "gemini-1.5-flash-8b":            ["gemini-2.5-flash-lite"],
-    "gemini-1.5-flash-8b-001":        ["gemini-2.5-flash-lite"],
+    "gemini-2.0-flash-001":           ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-1.5-flash-8b":            ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-1.5-flash-8b-001":        ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
 }
+
+# ── Access protection ─────────────────────────────────────────────────────────
+ACCESS_CODE = os.getenv("ACCESS_CODE", "")   # set this env var in Cloud Run
+# Derive a stable token from the code so we never store the code itself
+def _make_token(code: str) -> str:
+    return hashlib.sha256(f"avatar-reels-{code}".encode()).hexdigest()
 
 app = FastAPI()
 
@@ -113,10 +121,30 @@ def serialize_response(response: Any) -> dict:
     return result
 
 
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+class AuthRequest(BaseModel):
+    code: str
+
+@app.post("/api/auth/login")
+async def login(req: AuthRequest):
+    if ACCESS_CODE and req.code != ACCESS_CODE:
+        raise HTTPException(status_code=401, detail="访问码错误")
+    return {"token": _make_token(ACCESS_CODE)}
+
+@app.get("/api/auth/check")
+async def check(x_access_token: str = Header(default="")):
+    if ACCESS_CODE and x_access_token != _make_token(ACCESS_CODE):
+        raise HTTPException(status_code=401, detail="未授权")
+    return {"ok": True}
+
+
 # ── API endpoint ──────────────────────────────────────────────────────────────
 
 @app.post("/api/generate")
-async def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest, x_access_token: str = Header(default="")):
+    if ACCESS_CODE and x_access_token != _make_token(ACCESS_CODE):
+        raise HTTPException(status_code=401, detail="未授权，请刷新页面重新登录")
     model_candidates = MODEL_FALLBACKS.get(req.model, [req.model])
     contents = build_contents(req.contents)
     config = build_config(req.config)
