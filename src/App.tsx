@@ -64,6 +64,11 @@ export default function App() {
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditProgress, setAuditProgress] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditTechnicalError, setAuditTechnicalError] = useState<any>(null);
+  const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
+  const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextRetryIn: number } | null>(null);
+  const [currentBatchSize, setCurrentBatchSize] = useState(15);
+  const [activeModelId, setActiveModelId] = useState("gemini-3-flash-preview");
   const [downloadFolder, setDownloadFolder] = useState('');
   const [auditResults, setAuditResults] = useState<{
     id: string;
@@ -98,6 +103,7 @@ export default function App() {
   const [selectedModelId, setSelectedModelId] = useState('google/gemini-flash-1.5-exp:free');
   const [customMatchingRules, setCustomMatchingRules] = useState('根据文案的情感基调和核心关键词，匹配最符合意境的图片。');
   const [viewMode, setViewMode] = useState<'grid' | 'edit'>('grid');
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [gridSize, setGridSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -637,22 +643,73 @@ export default function App() {
   };
 
   // Helper for retrying API calls with exponential backoff
-  const callWithRetry = async (fn: () => Promise<any>, maxRetries = 3, initialDelay = 2000) => {
+  const generateTraceId = () => {
+    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  };
+
+  const normalizeError = (error: any) => {
+    const rawMessage = error.message || String(error);
+    const traceId = generateTraceId();
+    
+    // Technical categorization
+    let category: '502' | '503' | '429' | 'timeout' | 'safety' | 'quota' | 'unknown' = 'unknown';
+    let suggestion = "请稍后重试或检查网络连接。";
+    
+    const cleanMessage = rawMessage.replace(/<[^>]*>?/gm, ''); // Strip HTML tags
+    
+    if (cleanMessage.includes('502')) {
+      category = '502';
+      suggestion = "服务器网关错误，可能是暂时性的负载过高，请重试。";
+    } else if (cleanMessage.includes('503') || cleanMessage.includes('UNAVAILABLE')) {
+      category = '503';
+      suggestion = "服务暂时不可用，AI 建议您等待几秒后再次尝试。";
+    } else if (cleanMessage.includes('429') || cleanMessage.includes('RESOURCE_EXHAUSTED')) {
+      category = '429';
+      suggestion = "请求过于频繁，已达到 API 限额。我们将自动为您执行退避重试。";
+    } else if (cleanMessage.toLowerCase().includes('timeout') || cleanMessage.includes('超时')) {
+      category = 'timeout';
+      suggestion = "请求响应超时，可能是文案批处理过大。我们将自动缩小请求规模并重试。";
+    } else if (cleanMessage.toLowerCase().includes('safety') || cleanMessage.includes('安全')) {
+      category = 'safety';
+      suggestion = "内容可能触发了 AI 安全策略。请尝试修改文案内容。";
+    } else if (cleanMessage.toLowerCase().includes('quota')) {
+      category = 'quota';
+      suggestion = "API 额度已耗尽。请检查您的 API Key 或稍后再试。";
+    }
+
+    return {
+      category,
+      message: cleanMessage,
+      suggestion,
+      traceId,
+      raw: error
+    };
+  };
+
+  const callWithRetry = async (
+    fn: () => Promise<any>, 
+    maxRetries = 3, 
+    initialDelay = 2000,
+    onRetry?: (attempt: number, nextRetryIn: number) => void
+  ) => {
     let lastError;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         return await fn();
       } catch (error: any) {
         lastError = error;
-        const isRetryable = error.message?.includes('503') || 
-                           error.message?.includes('UNAVAILABLE') || 
-                           error.message?.includes('high demand') ||
-                           error.message?.includes('429') ||
-                           error.message?.includes('RESOURCE_EXHAUSTED');
+        const normalized = normalizeError(error);
+        const isRetryable = ['502', '503', '429', 'timeout'].includes(normalized.category);
         
         if (isRetryable && attempt < maxRetries - 1) {
-          const delay = initialDelay * Math.pow(2, attempt);
-          console.log(`API call failed (attempt ${attempt + 1}), retrying in ${delay}ms...`, error);
+          // Exponential backoff with jitter
+          const baseDelay = initialDelay * Math.pow(2, attempt);
+          const jitter = Math.random() * 1000;
+          const delay = baseDelay + jitter;
+          
+          if (onRetry) onRetry(attempt + 1, Math.round(delay / 1000));
+          
+          console.log(`[Trace:${normalized.traceId}] API retry ${attempt + 1}/${maxRetries} in ${Math.round(delay)}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
@@ -665,9 +722,13 @@ export default function App() {
   const handleAuditCopy = async (overrideText?: string) => {
     const textToProcess = overrideText || copywriting;
     if (!textToProcess) return;
+    
     setIsAuditing(true);
     setAuditError(null);
+    setAuditTechnicalError(null);
+    setRetryStatus(null);
     setAuditResults([]);
+    setActiveModelId("gemini-3-flash-preview"); // Reset to primary
     
     try {
       const ai = getAIInstance();
@@ -679,12 +740,9 @@ export default function App() {
       // Handles cases where segments are joined without newlines (e.g. "English.1 中文")
       const segmentRegex = /(^|[\n\s.!?\"'])(\d{1,3}[\.\s\t]+)(?=[\"“'‘\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
       const segments: string[] = [];
-      
-      // Find all matches for segment starts
       const matches = Array.from(textToProcess.matchAll(segmentRegex)) as RegExpMatchArray[];
       
       if (matches.length === 0) {
-        // If no numbered segments found, treat the whole thing as one segment
         segments.push(textToProcess);
       } else {
         for (let i = 0; i < matches.length; i++) {
@@ -695,38 +753,26 @@ export default function App() {
         }
       }
 
-      // Parse segments locally to separate Chinese and English
       const parsedSegments = segments.map(segment => {
         const idMatch = segment.match(/^(\d+[\.\s\t]+)/);
         const idStr = idMatch ? idMatch[1] : '';
         const rest = segment.substring(idStr.length);
-        
         let lastChineseIndex = -1;
-        // Match Chinese characters and Chinese punctuation
         const chineseRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/;
         for (let i = 0; i < rest.length; i++) {
-          if (chineseRegex.test(rest[i])) {
-            lastChineseIndex = i;
-          }
+          if (chineseRegex.test(rest[i])) lastChineseIndex = i;
         }
-        
-        // Advance lastChineseIndex to include trailing punctuation (like quotes) that belong to the Chinese part
         if (lastChineseIndex !== -1) {
           const trailingPunctuation = /^[\s"”'’\)\]}>]+/;
           const match = rest.substring(lastChineseIndex + 1).match(trailingPunctuation);
-          if (match) {
-            lastChineseIndex += match[0].length;
-          }
+          if (match) lastChineseIndex += match[0].length;
         }
-        
         const chinese = lastChineseIndex !== -1 ? rest.substring(0, lastChineseIndex + 1).trim() : '';
         const english = lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim();
         const id = idStr ? idStr.replace(/[\.\s\t]+$/, '') : '1';
-        
         return { id, chinese, english };
       });
 
-      // Deduplicate segments by ID to prevent duplicate results
       const uniqueParsedSegments: typeof parsedSegments = [];
       const seenIds = new Set<string>();
       for (const seg of parsedSegments) {
@@ -737,27 +783,39 @@ export default function App() {
       }
 
       console.log(`Found ${uniqueParsedSegments.length} unique segments to audit.`);
-      const batchSize = images.length > 0 ? 5 : 15;
-      const totalBatches = Math.ceil(uniqueParsedSegments.length / batchSize);
+      
+      let processingIndex = 0;
+      let batchSize = images.length > 0 ? 5 : 15;
+      let currentModel = "gemini-3-flash-preview";
 
-      // Process in batches of 5 to avoid token limits and provide incremental updates
-      for (let i = 0; i < uniqueParsedSegments.length; i += batchSize) {
-        const currentBatchNum = Math.floor(i / batchSize) + 1;
-        setAuditProgress(`${currentBatchNum} / ${totalBatches}`);
+      while (processingIndex < uniqueParsedSegments.length) {
+        const remaining = uniqueParsedSegments.length - processingIndex;
+        const currentBatchSizeToUse = Math.min(batchSize, remaining);
+        const currentBatchNum = Math.ceil((processingIndex + 1) / batchSize);
+        const totalBatchesEstimated = Math.ceil(uniqueParsedSegments.length / batchSize);
         
-        const batchItems = uniqueParsedSegments.slice(i, i + batchSize);
+        setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
+        
+        const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
         const batchText = batchItems.map(item => `${item.id}. ${item.english}`).join('\n\n');
-        console.log(`Processing batch ${currentBatchNum} of ${totalBatches}`);
+        
+        const traceId = generateTraceId();
+        setCurrentTraceId(traceId);
 
-        // Create a timeout promise for each batch
-        let timeoutId: any;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error("质检请求超时，请尝试分段处理或检查网络。")), 150000);
-        });
+        try {
+          // Timeout promise
+          let timeoutId: any;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              const err = new Error("质检请求超时，AI 引擎响应过慢。");
+              reject(err);
+            }, 120000);
+          });
 
-        const auditPromise = callWithRetry(() => ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: `你是一个专业的文案质检员。请对以下英文文案进行“AI 文案质检”。
+          const auditPromise = callWithRetry(
+            () => ai.models.generateContent({
+              model: currentModel,
+              contents: `你是一个专业的文案质检员。请对以下英文文案进行“AI 文案质检”。
           
           待处理英文文案：
           ${batchText}
@@ -779,33 +837,20 @@ export default function App() {
           
           请以 JSON 数组格式返回结果。
           示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]`,
-          config: { responseMimeType: "application/json" }
-        }));
+              config: { responseMimeType: "application/json" }
+            }), 
+            3, 2000, 
+            (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
+          );
 
-        let response: any;
-        try {
-          response = await Promise.race([auditPromise, timeoutPromise]);
-        } finally {
+          const response = await Promise.race([auditPromise, timeoutPromise]) as any;
           clearTimeout(timeoutId);
-        }
+          setRetryStatus(null);
 
-        let responseText = "";
-        try {
-          responseText = response.text;
-        } catch (e) {
-          console.error("Failed to access response text:", e);
-          throw new Error("AI 拒绝了该请求，可能是因为内容触发了安全策略。");
-        }
+          const responseText = response.text;
+          if (!responseText) throw new Error("AI 返回了空响应。");
 
-        if (!responseText) {
-          throw new Error("AI 未能返回有效的质检结果。");
-        }
-
-        try {
-          // Clean up markdown formatting if the model ignored responseMimeType
           let cleanText = responseText.replace(/^```json\n?/g, '').replace(/```\n?$/g, '').trim();
-          
-          // Extract array if there's surrounding text
           const arrayStart = cleanText.indexOf('[');
           const arrayEnd = cleanText.lastIndexOf(']');
           if (arrayStart !== -1 && arrayEnd !== -1) {
@@ -813,19 +858,9 @@ export default function App() {
           }
 
           const batchResults = JSON.parse(cleanText);
-          if (!Array.isArray(batchResults)) {
-            throw new Error("返回结果格式错误（非数组）。");
-          }
-          
           const mergedResults = batchResults.map((res: any) => {
             const localItem = batchItems.find(item => item.id === String(res.id)) || batchItems[0];
-            
-            // Strip leading numbers and punctuation just in case AI still includes them
-            const stripLeadingId = (text: string) => {
-              if (!text) return text;
-              return text.replace(/^(\d+[\.\s\t]+)/, '').trim();
-            };
-
+            const stripLeadingId = (text: string) => text ? text.replace(/^(\d+[\.\s\t]+)/, '').trim() : '';
             return {
               ...res,
               originalEnglish: stripLeadingId(res.originalEnglish),
@@ -834,32 +869,50 @@ export default function App() {
               chinese: localItem ? localItem.chinese : ''
             };
           });
-          
+
           setAuditResults(prev => {
             const newResults = [...prev];
             for (const res of mergedResults) {
-              if (!newResults.some(r => r.id === res.id)) {
-                newResults.push(res);
-              }
+              if (!newResults.some(r => r.id === res.id)) newResults.push(res);
             }
             return newResults;
           });
-        } catch (parseError) {
-          console.error("JSON Parse Error in batch:", parseError, responseText);
-          throw new Error("解析质检结果失败，可能是文案过长导致返回截断。请尝试分批处理。");
+
+          // Success - move to next batch
+          processingIndex += currentBatchSizeToUse;
+        } catch (error: any) {
+          const normalized = normalizeError(error);
+          console.error(`[Trace:${traceId}] Batch failure:`, normalized);
+
+          // Adaptive Batching: If it's a timeout or truncation, shrink batch size
+          if (normalized.category === 'timeout' && batchSize > 2) {
+            batchSize = Math.max(2, Math.floor(batchSize / 2));
+            console.log(`[Trace:${traceId}] Reducing batch size to ${batchSize} due to timeout.`);
+            continue; // Retry with smaller batch
+          }
+
+          // Model Fallback: If Flash fails repeatedly or hits specific limits, try fallback
+          if (currentModel === "gemini-3-flash-preview") {
+            console.log(`[Trace:${traceId}] Falling back to gemini-1.5-flash-8b...`);
+            currentModel = "gemini-1.5-flash-8b";
+            setActiveModelId(currentModel);
+            continue; // Retry with safer model
+          }
+
+          // If fallback also fails or it's non-retryable
+          throw error;
         }
       }
 
-      // If images are present, trigger matching after all audit batches are done
-      if (images.length > 0) {
-        await matchImagesWithCopy();
-      }
+      if (images.length > 0) await matchImagesWithCopy();
     } catch (error: any) {
-      console.error("Audit Error:", error);
-      setAuditError(error.message || "质检过程中发生未知错误。");
+      const normalized = normalizeError(error);
+      setAuditError(normalized.suggestion);
+      setAuditTechnicalError(normalized);
     } finally {
       setIsAuditing(false);
       setAuditProgress(null);
+      setRetryStatus(null);
     }
   };
 
@@ -1193,6 +1246,9 @@ export default function App() {
           setTimeout(() => reject(new Error("图片匹配请求超时。")), 150000)
         );
 
+        const traceId = generateTraceId();
+        setCurrentTraceId(traceId);
+
         const matchPromise = (async () => {
           if (matchingEngine === 'gemini') {
             const ai = getAIInstance();
@@ -1205,35 +1261,31 @@ export default function App() {
               };
             }));
 
-            const response = await callWithRetry(() => ai.models.generateContent({
-              model: 'gemini-3-flash-preview',
-              contents: {
-                parts: [
-                  ...imageParts,
-                  { text: prompt }
-                ]
-              },
-              config: {
-                responseMimeType: "application/json"
-              }
-            }));
+            const response = await callWithRetry(
+              () => ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: {
+                  parts: [
+                    ...imageParts,
+                    { text: prompt }
+                  ]
+                },
+                config: {
+                  responseMimeType: "application/json"
+                }
+              }),
+              3, 2000,
+              (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
+            );
             return JSON.parse(response.text);
           } else {
-            // OpenRouter Logic
+            // OpenRouter Logic... (Keep existing)
             const apiKey = openRouterApiKey || process.env.OPENROUTER_API_KEY;
             if (!apiKey) throw new Error("请先填写 OpenRouter API Key");
-
-            const contentParts: any[] = [
-              { type: "text", text: prompt }
-            ];
-
+            const contentParts: any[] = [ { type: "text", text: prompt } ];
             currentImagesBatch.forEach(img => {
-              contentParts.push({
-                type: "image_url",
-                image_url: { url: img.original }
-              });
+              contentParts.push({ type: "image_url", image_url: { url: img.original } });
             });
-
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
               method: "POST",
               headers: {
@@ -1248,12 +1300,10 @@ export default function App() {
                 response_format: { type: "json_object" }
               })
             });
-
             if (!response.ok) {
               const errorData = await response.json();
               throw new Error(errorData.error?.message || `OpenRouter Error: ${response.status}`);
             }
-
             const data = await response.json();
             if (!data.choices?.[0]?.message?.content) {
               throw new Error("OpenRouter 返回了空响应。");
@@ -1265,6 +1315,7 @@ export default function App() {
         })();
 
         const batchResult = await Promise.race([matchPromise, timeoutPromise]) as any[];
+        setRetryStatus(null);
         
         setImages(prev => {
           const next = [...prev];
@@ -1282,11 +1333,13 @@ export default function App() {
         });
       }
     } catch (error: any) {
-      console.error("Matching Error:", error);
-      setAuditError(`图片匹配失败: ${error.message || "未知错误"}`);
+      const normalized = normalizeError(error);
+      setAuditError(`图片匹配失败: ${normalized.suggestion}`);
+      setAuditTechnicalError(normalized);
     } finally {
       setIsMatching(false);
       setAuditProgress(null);
+      setRetryStatus(null);
     }
   };
 
@@ -1772,10 +1825,22 @@ export default function App() {
                         }`}
                       >
                         {isAuditing ? (
-                          <>
-                            <Loader2 className="w-6 h-6 animate-spin" />
-                            正在质检 {auditProgress ? `(${auditProgress})` : ''}...
-                          </>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="flex items-center gap-2">
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              <span className="text-sm">正在质检 {auditProgress ? `(${auditProgress})` : ''}</span>
+                            </div>
+                            {retryStatus && (
+                              <span className="text-[10px] bg-red-500/20 px-2 py-0.5 rounded-full animate-pulse">
+                                重试中: 第 {retryStatus.attempt}/{retryStatus.total} 次 | {retryStatus.nextRetryIn}秒后
+                              </span>
+                            )}
+                            {activeModelId !== "gemini-3-flash-preview" && (
+                              <span className="text-[9px] opacity-70">
+                                已自动降级至备选模型加速处理
+                              </span>
+                            )}
+                          </div>
                         ) : isMatching ? (
                           <>
                             <Loader2 className="w-6 h-6 animate-spin" />
@@ -1811,21 +1876,62 @@ export default function App() {
                 {/* Audit Results Section */}
                 {auditError && (
                   <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-6 bg-red-50 border border-red-200 rounded-[2rem] flex items-center gap-4 text-red-600 shadow-sm"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="overflow-hidden bg-white border border-red-100 rounded-[2.5rem] shadow-xl shadow-red-50/50"
                   >
-                    <AlertCircle className="w-6 h-6 shrink-0" />
-                    <div className="flex-1">
-                      <p className="font-bold text-sm">质检失败</p>
-                      <p className="text-xs opacity-80">{auditError}</p>
+                    <div className="p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center gap-6">
+                      <div className="w-14 h-14 bg-red-50 rounded-2xl flex items-center justify-center shrink-0">
+                        <AlertCircle className="w-7 h-7 text-red-500" />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <h3 className="text-lg font-bold text-neutral-900 leading-tight">文案质检未能完成</h3>
+                        <p className="text-sm text-neutral-500 font-medium">{auditError}</p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                        <button 
+                          onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+                          className="px-5 py-3 rounded-xl text-xs font-bold text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 transition-all border border-neutral-100"
+                        >
+                          {showTechnicalDetails ? '隐藏技术细节' : '查看技术细节'}
+                        </button>
+                        <button 
+                          onClick={() => handleAuditCopy()}
+                          className="px-8 py-3 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100 ring-4 ring-red-50"
+                        >
+                          立即重新处理
+                        </button>
+                      </div>
                     </div>
-                    <button 
-                      onClick={() => handleAuditCopy()}
-                      className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all"
-                    >
-                      重试
-                    </button>
+
+                    <AnimatePresence>
+                      {showTechnicalDetails && auditTechnicalError && (
+                        <motion.div 
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="bg-neutral-50 border-t border-neutral-100"
+                        >
+                          <div className="p-6 md:p-8 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">错误报告 (Raw Payload)</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-neutral-300">TRACE_ID:</span>
+                                <code className="text-[10px] font-black bg-neutral-200 px-2 py-0.5 rounded text-neutral-600">{auditTechnicalError.traceId}</code>
+                              </div>
+                            </div>
+                            <div className="bg-neutral-900 rounded-2xl p-4 overflow-x-auto shadow-inner">
+                              <pre className="text-[10px] font-mono text-green-400/80 leading-relaxed">
+                                {auditTechnicalError.message}
+                              </pre>
+                            </div>
+                            <p className="text-[9px] text-neutral-400 italic">
+                              * 此错误已通过“归一化策略”自动归类为 [CATEGORY:{auditTechnicalError.category.toUpperCase()}]，如有波动请联系技术支持并提供 TRACE_ID。
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
                 )}
 
