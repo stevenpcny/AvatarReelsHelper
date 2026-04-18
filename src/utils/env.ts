@@ -31,3 +31,21 @@ export const getOpenRouterApiKey = (): string => {
   
   return '';
 };
+
+export const getVertexProjectId = (): string => {
+  if (import.meta.env.VITE_VERTEX_PROJECT_ID) return import.meta.env.VITE_VERTEX_PROJECT_ID;
+  if (typeof process !== 'undefined' && process.env?.VITE_VERTEX_PROJECT_ID) return process.env.VITE_VERTEX_PROJECT_ID;
+  return '';
+};
+
+export const getVertexLocation = (): string => {
+  if (import.meta.env.VITE_VERTEX_LOCATION) return import.meta.env.VITE_VERTEX_LOCATION;
+  if (typeof process !== 'undefined' && process.env?.VITE_VERTEX_LOCATION) return process.env.VITE_VERTEX_LOCATION;
+  return 'us-central1'; // Default Fallback location
+};
+
+export const getVertexAccessToken = (): string => {
+  if (import.meta.env.VITE_VERTEX_ACCESS_TOKEN) return import.meta.env.VITE_VERTEX_ACCESS_TOKEN;
+  if (typeof process !== 'undefined' && process.env?.VITE_VERTEX_ACCESS_TOKEN) return process.env.VITE_VERTEX_ACCESS_TOKEN;
+  return '';
+};

@@ -13,7 +13,7 @@ import {
   Square, CheckSquare, ShieldCheck, Type, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getGeminiApiKey, getOpenRouterApiKey } from './utils/env';
+import { getGeminiApiKey, getOpenRouterApiKey, getVertexProjectId, getVertexLocation } from './utils/env';
 
 interface ImageItem {
   id: string;
@@ -37,8 +37,21 @@ export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
 
-  // Initialize Gemini AI
+  // Initialize Gemini AI (Vertex AI Supported)
   const getAIInstance = () => {
+    const project = getVertexProjectId();
+    const location = getVertexLocation() || 'us-central1';
+    
+    // For Vertex AI (typically requires Node.js ADC or OAuth token proxying)
+    if (project) {
+       return new GoogleGenAI({
+         vertexai: true,
+         project: project,
+         location: location
+       });
+    }
+
+    // Fallback to AI Studio version
     const key = geminiApiKey || getGeminiApiKey();
     return new GoogleGenAI({ apiKey: key });
   };
