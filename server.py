@@ -23,15 +23,15 @@ client = genai.Client(vertexai=True, project=PROJECT, location=LOCATION)
 # ── Model fallback chains (frontend name → ordered Vertex AI model list) ─────
 MODEL_FALLBACKS: dict[str, list[str]] = {
     # Image generation
-    "gemini-3.1-flash-image-preview": ["gemini-2.0-flash-exp", "gemini-2.0-flash-001", "gemini-1.5-flash-001"],
-    "gemini-2.5-flash-image":         ["gemini-2.0-flash-exp", "gemini-2.0-flash-001", "gemini-1.5-flash-001"],
+    "gemini-3.1-flash-image-preview": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-2.5-flash-image":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     # Text / audit / matching
-    "gemini-3-flash-preview":         ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
-    "gemini-3.0-flash-preview":       ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
+    "gemini-3-flash-preview":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-3.0-flash-preview":       ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     # Already-valid names — still provide fallback
-    "gemini-2.0-flash-001":           ["gemini-2.0-flash-001", "gemini-1.5-flash-001"],
-    "gemini-1.5-flash-8b":            ["gemini-1.5-flash-001"],
-    "gemini-1.5-flash-8b-001":        ["gemini-1.5-flash-001"],
+    "gemini-2.0-flash-001":           ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-1.5-flash-8b":            ["gemini-2.5-flash-lite"],
+    "gemini-1.5-flash-8b-001":        ["gemini-2.5-flash-lite"],
 }
 
 app = FastAPI()
