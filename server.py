@@ -27,8 +27,8 @@ MODEL_MAP: dict[str, str] = {
     # Text / audit / matching
     "gemini-3-flash-preview":         "gemini-2.0-flash-001",
     "gemini-3.0-flash-preview":       "gemini-2.0-flash-001",
-    # Fallback model (must include version suffix in Vertex AI)
-    "gemini-1.5-flash-8b":            "gemini-1.5-flash-8b-001",
+    # Fallback model
+    "gemini-1.5-flash-8b":            "gemini-2.0-flash-001",
 }
 
 app = FastAPI()
