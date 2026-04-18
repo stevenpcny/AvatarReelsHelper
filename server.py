@@ -15,9 +15,21 @@ from pydantic import BaseModel
 from vertexai.generative_models import GenerationConfig, GenerativeModel, Part
 
 # ── Vertex AI init (uses Workload Identity on Cloud Run automatically) ───────
-PROJECT = os.getenv("VERTEX_PROJECT", "koubo")
+PROJECT = os.getenv("VERTEX_PROJECT", "project-2aed790f-b594-45e5-a62")
 LOCATION = os.getenv("VERTEX_LOCATION", "us-west1")
 vertexai.init(project=PROJECT, location=LOCATION)
+
+# ── Model name mapping (AI Studio names → Vertex AI names) ───────────────────
+MODEL_MAP: dict[str, str] = {
+    # Image generation models
+    "gemini-3.1-flash-image-preview": "gemini-2.0-flash-exp",
+    "gemini-2.5-flash-image":         "gemini-2.0-flash-exp",
+    # Text models
+    "gemini-3-flash-preview":         "gemini-2.5-flash-preview-04-17",
+    "gemini-3.0-flash-preview":       "gemini-2.5-flash-preview-04-17",
+    # Fallback already valid in Vertex AI
+    "gemini-1.5-flash-8b":            "gemini-1.5-flash-8b",
+}
 
 app = FastAPI()
 
@@ -109,7 +121,8 @@ def serialize_response(response: Any) -> dict:
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
     try:
-        model = GenerativeModel(req.model)
+        model_name = MODEL_MAP.get(req.model, req.model)
+        model = GenerativeModel(model_name)
         parts = build_parts(req.contents)
         gen_config = build_generation_config(req.config)
         response = model.generate_content(parts, generation_config=gen_config)
