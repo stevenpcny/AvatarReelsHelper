@@ -13,7 +13,7 @@ import {
   Square, CheckSquare, ShieldCheck, Type, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
+import { getGeminiApiKey, getOpenRouterApiKey } from './utils/env';
 
 interface ImageItem {
   id: string;
@@ -33,34 +33,13 @@ interface Skill {
   prompt: string;
 }
 
-// Environment Variable Parsing Helper
-// Type-safe and resilient to both Vite (import.meta.env) and Node (process.env) injection.
-const getEnvStr = (key: string): string => {
-  // 1. Prioritize Vite's import.meta.env
-  // Need to bypass strict import.meta typing dynamically to avoid TS error
-  const metaObj = import.meta as unknown as Record<string, unknown>;
-  if (typeof metaObj !== 'undefined' && metaObj.env) {
-    const env = metaObj.env as Record<string, string | undefined>;
-    if (env[key]) return env[key]!;
-    if (env[`VITE_${key}`]) return env[`VITE_${key}`]!;
-  }
-  // 2. Fallback to process.env safely (e.g., AI Studio backend injection/build time)
-  if (typeof process !== 'undefined' && process.env) {
-    if (process.env[key]) return process.env[key]!;
-  }
-  return '';
-};
-
-const SYSTEM_GEMINI_KEY = getEnvStr('GEMINI_API_KEY') || getEnvStr('API_KEY');
-const SYSTEM_OPENROUTER_KEY = getEnvStr('OPENROUTER_API_KEY');
-
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
 
   // Initialize Gemini AI
   const getAIInstance = () => {
-    const key = geminiApiKey || SYSTEM_GEMINI_KEY;
+    const key = geminiApiKey || getGeminiApiKey();
     return new GoogleGenAI({ apiKey: key });
   };
   const [currentPrompt, setCurrentPrompt] = useState('');
@@ -121,6 +100,7 @@ export default function App() {
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [openRouterApiKey, setOpenRouterApiKey] = useState('');
   const [openRouterModels, setOpenRouterModels] = useState<any[]>([]);
+  const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('google/gemini-flash-1.5-exp:free');
   const [customMatchingRules, setCustomMatchingRules] = useState('根据文案的情感基调和核心关键词，匹配最符合意境的图片。');
   const [viewMode, setViewMode] = useState<'grid' | 'edit'>('grid');
@@ -160,8 +140,12 @@ export default function App() {
   // Fetch OpenRouter models on mount
   useEffect(() => {
     const fetchModels = async () => {
+      setOpenRouterModelsError(null);
       try {
         const res = await fetch('https://openrouter.ai/api/v1/models');
+        if (!res.ok) {
+          throw new Error(`HTTP Error ${res.status}`);
+        }
         const data = await res.json();
         // Filter for free multimodal models (simplified check)
         const freeModels = data.data.filter((m: any) => 
@@ -172,6 +156,7 @@ export default function App() {
         if (freeModels.length > 0) setSelectedModelId(freeModels[0].id);
       } catch (err) {
         console.error("Failed to fetch OpenRouter models", err);
+        setOpenRouterModelsError("加载外接模型列表失败，请检查网络限制。已回退到默认体验模型。");
       }
     };
     fetchModels();
@@ -1301,7 +1286,7 @@ export default function App() {
             return JSON.parse(response.text);
           } else {
             // OpenRouter Logic... (Keep existing)
-            const apiKey = openRouterApiKey || SYSTEM_OPENROUTER_KEY;
+            const apiKey = openRouterApiKey || getOpenRouterApiKey();
             if (!apiKey) throw new Error("请先填写 OpenRouter API Key");
             const contentParts: any[] = [ { type: "text", text: prompt } ];
             currentImagesBatch.forEach(img => {
@@ -1538,16 +1523,23 @@ export default function App() {
                         <select 
                           value={selectedModelId}
                           onChange={(e) => setSelectedModelId(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[10px] outline-none bg-neutral-50"
+                          className={`w-full px-3 py-2 rounded-xl border ${openRouterModelsError ? 'border-red-300 text-red-600' : 'border-neutral-200 text-[10px]'} outline-none bg-neutral-50`}
                         >
                           {openRouterModels.length > 0 ? (
                             openRouterModels.map(m => (
                               <option key={m.id} value={m.id}>{m.name}</option>
                             ))
+                          ) : openRouterModelsError ? (
+                            <option value="google/gemini-flash-1.5-exp:free">Gemini Flash (Fallback)</option>
                           ) : (
                             <option>正在加载模型...</option>
                           )}
                         </select>
+                        {openRouterModelsError && (
+                          <div className="mt-1 text-[10px] text-red-500 font-medium">
+                            {openRouterModelsError}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
