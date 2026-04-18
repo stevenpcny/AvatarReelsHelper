@@ -19,16 +19,19 @@ PROJECT  = os.getenv("VERTEX_PROJECT",  "project-2aed790f-b594-45e5-a62")
 LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")   # us-central1 has broadest model support
 vertexai.init(project=PROJECT, location=LOCATION)
 
-# ── Model name mapping (AI Studio names → Vertex AI names) ───────────────────
-MODEL_MAP: dict[str, str] = {
-    # Image generation (needs gemini-2.0-flash-exp for native image output)
-    "gemini-3.1-flash-image-preview": "gemini-2.0-flash-exp",
-    "gemini-2.5-flash-image":         "gemini-2.0-flash-exp",
+# ── Model fallback chains (AI Studio name → ordered list of Vertex AI models) ─
+# The backend tries each model in order until one succeeds.
+MODEL_FALLBACKS: dict[str, list[str]] = {
+    # Image generation
+    "gemini-3.1-flash-image-preview": ["gemini-2.0-flash-exp", "gemini-2.0-flash-001"],
+    "gemini-2.5-flash-image":         ["gemini-2.0-flash-exp", "gemini-2.0-flash-001"],
     # Text / audit / matching
-    "gemini-3-flash-preview":         "gemini-2.0-flash-001",
-    "gemini-3.0-flash-preview":       "gemini-2.0-flash-001",
-    # Fallback model
-    "gemini-1.5-flash-8b":            "gemini-2.0-flash-001",
+    "gemini-3-flash-preview":         ["gemini-2.5-flash-preview-04-17", "gemini-2.0-flash-001"],
+    "gemini-3.0-flash-preview":       ["gemini-2.5-flash-preview-04-17", "gemini-2.0-flash-001"],
+    # Already-valid Vertex AI names — still provide a fallback
+    "gemini-2.0-flash-001":           ["gemini-2.0-flash-001"],
+    "gemini-1.5-flash-8b":            ["gemini-2.0-flash-001"],
+    "gemini-1.5-flash-8b-001":        ["gemini-2.0-flash-001"],
 }
 
 app = FastAPI()
@@ -120,15 +123,22 @@ def serialize_response(response: Any) -> dict:
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
-    try:
-        model_name = MODEL_MAP.get(req.model, req.model)
-        model = GenerativeModel(model_name)
-        parts = build_parts(req.contents)
-        gen_config = build_generation_config(req.config)
-        response = model.generate_content(parts, generation_config=gen_config)
-        return serialize_response(response)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    candidates = MODEL_FALLBACKS.get(req.model, [req.model])
+    parts = build_parts(req.contents)
+    gen_config = build_generation_config(req.config)
+
+    last_exc: Exception = RuntimeError("No models tried")
+    for model_name in candidates:
+        try:
+            response = GenerativeModel(model_name).generate_content(
+                parts, generation_config=gen_config
+            )
+            return serialize_response(response)
+        except Exception as exc:
+            print(f"[fallback] {model_name} failed: {exc}")
+            last_exc = exc
+
+    raise HTTPException(status_code=500, detail=str(last_exc))
 
 
 # ── Serve compiled React SPA ─────────────────────────────────────────────────
