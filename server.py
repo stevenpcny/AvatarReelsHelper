@@ -15,20 +15,20 @@ from pydantic import BaseModel
 from vertexai.generative_models import GenerationConfig, GenerativeModel, Part
 
 # ── Vertex AI init (uses Workload Identity on Cloud Run automatically) ───────
-PROJECT = os.getenv("VERTEX_PROJECT", "project-2aed790f-b594-45e5-a62")
-LOCATION = os.getenv("VERTEX_LOCATION", "us-west1")
+PROJECT  = os.getenv("VERTEX_PROJECT",  "project-2aed790f-b594-45e5-a62")
+LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")   # us-central1 has broadest model support
 vertexai.init(project=PROJECT, location=LOCATION)
 
 # ── Model name mapping (AI Studio names → Vertex AI names) ───────────────────
 MODEL_MAP: dict[str, str] = {
-    # Image generation models
+    # Image generation (needs gemini-2.0-flash-exp for native image output)
     "gemini-3.1-flash-image-preview": "gemini-2.0-flash-exp",
     "gemini-2.5-flash-image":         "gemini-2.0-flash-exp",
-    # Text models
-    "gemini-3-flash-preview":         "gemini-2.5-flash-preview-04-17",
-    "gemini-3.0-flash-preview":       "gemini-2.5-flash-preview-04-17",
-    # Fallback already valid in Vertex AI
-    "gemini-1.5-flash-8b":            "gemini-1.5-flash-8b",
+    # Text / audit / matching
+    "gemini-3-flash-preview":         "gemini-2.0-flash-001",
+    "gemini-3.0-flash-preview":       "gemini-2.0-flash-001",
+    # Fallback model (must include version suffix in Vertex AI)
+    "gemini-1.5-flash-8b":            "gemini-1.5-flash-8b-001",
 }
 
 app = FastAPI()
