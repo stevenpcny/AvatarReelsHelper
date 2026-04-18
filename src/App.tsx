@@ -4,16 +4,15 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
-import { 
-  Upload, Wand2, Download, RefreshCcw, 
-  Image as ImageIcon, Loader2, AlertCircle, 
-  Plus, Save, Trash2, CheckCircle2, 
+import {
+  Upload, Wand2, Download, RefreshCcw,
+  Image as ImageIcon, Loader2, AlertCircle,
+  Plus, Save, Trash2, CheckCircle2,
   Layers, Play, X, ChevronRight, ChevronLeft, Settings2,
   Square, CheckSquare, ShieldCheck, Type, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getGeminiApiKey, getOpenRouterApiKey, getVertexProjectId, getVertexLocation } from './utils/env';
+import { getOpenRouterApiKey } from './utils/env';
 
 interface ImageItem {
   id: string;
@@ -37,23 +36,18 @@ export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
 
-  // Initialize Gemini AI (Vertex AI Supported)
-  const getAIInstance = () => {
-    const project = getVertexProjectId();
-    const location = getVertexLocation() || 'us-central1';
-    
-    // For Vertex AI (typically requires Node.js ADC or OAuth token proxying)
-    if (project) {
-       return new GoogleGenAI({
-         vertexai: true,
-         project: project,
-         location: location
-       });
+  // Call the Python backend which uses Vertex AI SDK (no API key needed on Cloud Run)
+  const callGenerateAPI = async (model: string, contents: any, config?: any): Promise<any> => {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, contents, config }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `API error ${res.status}`);
     }
-
-    // Fallback to AI Studio version
-    const key = geminiApiKey || getGeminiApiKey();
-    return new GoogleGenAI({ apiKey: key });
+    return res.json();
   };
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isProcessingAll, setIsProcessingAll] = useState(false);
@@ -426,13 +420,12 @@ export default function App() {
     );
 
     try {
-      const ai = getAIInstance();
       const base64Data = image.original.split(',')[1];
       const mimeType = image.original.split(';')[0].split(':')[1];
 
       // Enhanced prompt for fidelity and size preservation
       const enhancedPrompt = `
-        STRICT INSTRUCTION: 
+        STRICT INSTRUCTION:
         1. Preserve the original image's dimensions, resolution, and aspect ratio exactly.
         2. Keep all parts of the image that are not explicitly mentioned in the request completely identical to the original.
         3. Do not add any watermarks or borders.
@@ -440,22 +433,13 @@ export default function App() {
         5. Apply the following modification: ${prompt}
       `;
 
-      console.log(`[ImageEditor] Calling Gemini API for ${image.name}...`);
-      
-      const apiCall = ai.models.generateContent({
-        model: 'gemini-3.1-flash-image-preview',
-        contents: {
-          parts: [
-            { inlineData: { data: base64Data, mimeType: mimeType } },
-            { text: enhancedPrompt },
-          ],
-        },
-        config: {
-          imageConfig: {
-            imageSize: "2K"
-          }
-        }
-      });
+      console.log(`[ImageEditor] Calling backend API for ${image.name}...`);
+
+      const apiCall = callGenerateAPI(
+        'gemini-3.1-flash-image-preview',
+        { parts: [{ inlineData: { data: base64Data, mimeType } }, { text: enhancedPrompt }] },
+        { imageConfig: { imageSize: "2K" } }
+      );
 
       // Race the API call against the timeout
       const response = await Promise.race([apiCall, timeoutPromise]) as any;
@@ -492,19 +476,16 @@ export default function App() {
         // Fallback to 2.5 model if 3.1 is not available
         console.log(`[ImageEditor] Model 3.1 not found, falling back to 2.5 for ${image.name}`);
         try {
-          const ai = getAIInstance();
           const base64Data = image.original.split(',')[1];
           const mimeType = image.original.split(';')[0].split(':')[1];
-          
-          const fallbackResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: {
-              parts: [
-                { inlineData: { data: base64Data, mimeType: mimeType } },
+
+          const fallbackResponse = await callGenerateAPI(
+            'gemini-2.5-flash-image',
+            { parts: [
+                { inlineData: { data: base64Data, mimeType } },
                 { text: `STRICT INSTRUCTION: Preserve dimensions and fidelity. Modification: ${prompt}` },
-              ],
-            },
-          });
+            ]},
+          );
 
           let fallbackUrl: string | null = null;
           if (fallbackResponse.candidates?.[0]?.content?.parts) {
@@ -603,14 +584,13 @@ export default function App() {
     if (!newSkillName) return;
     setIsRefining(true);
     try {
-      const ai = getAIInstance();
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `用户想要创建一个名为“${newSkillName}”的修图技能。目前的指令构思是：“${currentPrompt}”。
+      const response = await callGenerateAPI(
+        "gemini-3-flash-preview",
+        `用户想要创建一个名为"${newSkillName}"的修图技能。目前的指令构思是："${currentPrompt}"。
         请作为专业的 AI 图像工程师，提出 2 个非常具体的问题，帮助用户细化这个指令，使其更具专业水准（例如：光影风格、色彩倾向、细节保留程度等）。
         请直接以 JSON 数组格式返回问题列表，例如：["问题1", "问题2"]。`,
-        config: { responseMimeType: "application/json" }
-      });
+        { responseMimeType: "application/json" }
+      );
       const questions = JSON.parse(response.text);
       setAiQuestions(questions);
       setAiAnswers(new Array(questions.length).fill(''));
@@ -625,22 +605,21 @@ export default function App() {
   const handleAiFinalize = async () => {
     setIsRefining(true);
     try {
-      const ai = getAIInstance();
       const context = aiQuestions.map((q, i) => `问：${q}\n答：${aiAnswers[i]}`).join('\n');
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `用户想要创建一个名为“${newSkillName}”的修图技能。
+      const response = await callGenerateAPI(
+        "gemini-3-flash-preview",
+        `用户想要创建一个名为"${newSkillName}"的修图技能。
         原始构思：${currentPrompt}
         补充细节：
         ${context}
-        
+
         请根据以上信息，编写一条极其专业、精准的 AI 图像处理指令（Prompt）。
         要求：
         1. 包含具体的艺术风格、光影参数、色彩空间描述。
         2. 强调保留原始特征的同时进行优化。
         3. 语言简洁有力，适合作为 AI 模型输入。
         直接返回最终指令文本，不要包含任何解释。`,
-      });
+      );
       setCurrentPrompt(response.text.trim());
       setCurrentAiStep('idle');
       setAiQuestions([]);
@@ -750,14 +729,13 @@ export default function App() {
     setActiveModelId("gemini-3-flash-preview"); // Reset to primary
     
     try {
-      const ai = getAIInstance();
       const activeInstructions = Array.from(selectedAuditOptions)
         .map(id => `- ${id === 'custom' ? '自定义指令' : id}: ${auditInstructions[id]}`)
         .join('\n');
 
       // Split text into segments by number (e.g., "1. ", "2. ")
       // Handles cases where segments are joined without newlines (e.g. "English.1 中文")
-      const segmentRegex = /(^|[\n\s.!?\"'])(\d{1,3}[\.\s\t]+)(?=[\"“'‘\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
+      const segmentRegex = /(^|[\n\s.!?\"'])(\d{1,3}[\.\s\t]+)(?=[\""'‘\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
       const segments: string[] = [];
       const matches = Array.from(textToProcess.matchAll(segmentRegex)) as RegExpMatchArray[];
       
@@ -782,7 +760,7 @@ export default function App() {
           if (chineseRegex.test(rest[i])) lastChineseIndex = i;
         }
         if (lastChineseIndex !== -1) {
-          const trailingPunctuation = /^[\s"”'’\)\]}>]+/;
+          const trailingPunctuation = /^[\s""'’\)\]}>]+/;
           const match = rest.substring(lastChineseIndex + 1).match(trailingPunctuation);
           if (match) lastChineseIndex += match[0].length;
         }
@@ -832,9 +810,9 @@ export default function App() {
           });
 
           const auditPromise = callWithRetry(
-            () => ai.models.generateContent({
-              model: currentModel,
-              contents: `你是一个专业的文案质检员。请对以下英文文案进行“AI 文案质检”。
+            () => callGenerateAPI(
+              currentModel,
+              `你是一个专业的文案质检员。请对以下英文文案进行"AI 文案质检"。
           
           待处理英文文案：
           ${batchText}
@@ -856,9 +834,9 @@ export default function App() {
           
           请以 JSON 数组格式返回结果。
           示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]`,
-              config: { responseMimeType: "application/json" }
-            }), 
-            3, 2000, 
+              { responseMimeType: "application/json" }
+            ),
+            3, 2000,
             (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
           );
 
@@ -1270,29 +1248,19 @@ export default function App() {
 
         const matchPromise = (async () => {
           if (matchingEngine === 'gemini') {
-            const ai = getAIInstance();
-            const imageParts = await Promise.all(currentImagesBatch.map(async (img) => {
-              return {
-                inlineData: {
-                  data: img.original.split(',')[1],
-                  mimeType: img.original.split(';')[0].split(':')[1]
-                }
-              };
+            const imageParts = currentImagesBatch.map((img) => ({
+              inlineData: {
+                data: img.original.split(',')[1],
+                mimeType: img.original.split(';')[0].split(':')[1]
+              }
             }));
 
             const response = await callWithRetry(
-              () => ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: {
-                  parts: [
-                    ...imageParts,
-                    { text: prompt }
-                  ]
-                },
-                config: {
-                  responseMimeType: "application/json"
-                }
-              }),
+              () => callGenerateAPI(
+                'gemini-3-flash-preview',
+                { parts: [...imageParts, { text: prompt }] },
+                { responseMimeType: "application/json" }
+              ),
               3, 2000,
               (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
             );
@@ -1952,7 +1920,7 @@ export default function App() {
                               </pre>
                             </div>
                             <p className="text-[9px] text-neutral-400 italic">
-                              * 此错误已通过“归一化策略”自动归类为 [CATEGORY:{auditTechnicalError.category.toUpperCase()}]，如有波动请联系技术支持并提供 TRACE_ID。
+                              * 此错误已通过"归一化策略"自动归类为 [CATEGORY:{auditTechnicalError.category.toUpperCase()}]，如有波动请联系技术支持并提供 TRACE_ID。
                             </p>
                           </div>
                         </motion.div>
@@ -2431,7 +2399,7 @@ export default function App() {
                               ) : (
                                 <div className="flex flex-col items-center gap-4 opacity-20">
                                   <Wand2 className="w-16 h-16 text-neutral-300" />
-                                  <p className="text-sm font-bold text-neutral-400 tracking-widest">准备就绪，点击“批量处理”开始</p>
+                                  <p className="text-sm font-bold text-neutral-400 tracking-widest">准备就绪，点击"批量处理"开始</p>
                                 </div>
                               )}
                             </div>
