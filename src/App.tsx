@@ -877,14 +877,9 @@ export default function App() {
         setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
         
         const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
-        // Only audit segments with substantial English content.
-        // Skip pure-Chinese paragraphs and those with only tiny embedded English fragments.
-        const hasSubstantialEnglish = (eng: string) => {
-          const trimmed = eng.trim();
-          const wordCount = trimmed.split(/\s+/).filter(w => /[a-zA-Z]{2,}/.test(w)).length;
-          return trimmed.length >= 10 && wordCount >= 2;
-        };
-        const auditableItems = batchItems.filter(item => hasSubstantialEnglish(item.english));
+        // Only audit pure-English paragraphs (no Chinese characters at all).
+        // Any paragraph containing Chinese is skipped regardless of embedded English.
+        const auditableItems = batchItems.filter(item => !item.chinese);
 
         if (auditableItems.length === 0) {
           processingIndex += currentBatchSizeToUse;
