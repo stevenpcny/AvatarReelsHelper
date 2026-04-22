@@ -2045,55 +2045,46 @@ export default function App() {
                     className="space-y-4"
                   >
                     <div className="flex items-center justify-between px-4">
-                      <div className="flex flex-col">
-                        <h3 className="text-sm font-bold text-neutral-800 flex items-center gap-2">
-                          <CheckCircle2 className="w-5 h-5 text-green-500" />
-                          质检审查列表 ({auditResults.length})
-                        </h3>
-                        {lastSaved && (
-                          <span className="text-[9px] text-neutral-400 mt-0.5">上次自动保存: {lastSaved}</span>
-                        )}
-                      </div>
-                      <div className="flex gap-4">
-                        <button 
-                          onClick={() => exportAuditResults('tsv')}
-                          className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          导出 Excel (TSV)
-                        </button>
-                        <button 
-                          onClick={() => exportAuditResults('json')}
-                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          备份 JSON
-                        </button>
-                        <button 
-                          onClick={() => backupInputRef.current?.click()}
-                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          恢复备份
-                        </button>
-                        <input 
-                          type="file" 
-                          ref={backupInputRef} 
-                          onChange={importBackup} 
-                          accept=".json" 
-                          className="hidden" 
-                        />
-                        <button 
+                      <div className="flex items-center gap-3">
+                        {/* Select-all checkbox: selects all + copies to clipboard */}
+                        <button
                           onClick={() => {
-                            if (window.confirm('确定要清空所有质检结果吗？')) {
-                              setAuditResults([]);
+                            const allIds = new Set(auditResults.map(r => r.id));
+                            const allSelected = selectedAuditIds.size === auditResults.length;
+                            if (allSelected) {
+                              setSelectedAuditIds(new Set());
+                            } else {
+                              setSelectedAuditIds(allIds);
+                              const lines = auditResults.map(r => r.correctedEnglish).join('\n');
+                              copyToClipboard(lines);
                             }
                           }}
-                          className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1.5"
+                          title={selectedAuditIds.size === auditResults.length ? '取消全选' : '全选并复制全部英文'}
+                          className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all shrink-0 ${
+                            selectedAuditIds.size === auditResults.length
+                              ? 'bg-blue-600 border-blue-600 text-white'
+                              : selectedAuditIds.size > 0
+                              ? 'bg-blue-100 border-blue-400 text-blue-600'
+                              : 'border-neutral-300 hover:border-blue-400'
+                          }`}
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          清空结果
+                          {selectedAuditIds.size === auditResults.length
+                            ? <CheckSquare className="w-3.5 h-3.5" />
+                            : selectedAuditIds.size > 0
+                            ? <CheckSquare className="w-3.5 h-3.5" />
+                            : <Square className="w-3.5 h-3.5 text-neutral-400" />}
                         </button>
+                        <div className="flex flex-col">
+                          <h3 className="text-sm font-bold text-neutral-800 flex items-center gap-2">
+                            <CheckCircle2 className="w-5 h-5 text-green-500" />
+                            质检审查列表 ({auditResults.length})
+                          </h3>
+                          {lastSaved && (
+                            <span className="text-[9px] text-neutral-400 mt-0.5">上次自动保存: {lastSaved}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-4 items-center">
                         {selectedAuditIds.size > 0 && (
                           <button
                             onClick={() => {
@@ -2104,12 +2095,51 @@ export default function App() {
                               copyToClipboard(lines);
                               setSelectedAuditIds(new Set());
                             }}
-                            className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all"
+                            className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all shadow-sm shadow-blue-200"
                           >
                             <Copy className="w-3.5 h-3.5" />
                             复制已选 ({selectedAuditIds.size})
                           </button>
                         )}
+                        <button
+                          onClick={() => exportAuditResults('tsv')}
+                          className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          导出 Excel (TSV)
+                        </button>
+                        <button
+                          onClick={() => exportAuditResults('json')}
+                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          备份 JSON
+                        </button>
+                        <button
+                          onClick={() => backupInputRef.current?.click()}
+                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          恢复备份
+                        </button>
+                        <input
+                          type="file"
+                          ref={backupInputRef}
+                          onChange={importBackup}
+                          accept=".json"
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => {
+                            if (window.confirm('确定要清空所有质检结果吗？')) {
+                              setAuditResults([]);
+                            }
+                          }}
+                          className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          清空结果
+                        </button>
                         <button
                           onClick={() => {
                             const tsv = auditResults.map(r => `${r.id}\t${r.chinese}\t${r.correctedEnglish}`).join('\n');
@@ -2120,7 +2150,7 @@ export default function App() {
                           <Copy className="w-3.5 h-3.5" />
                           拷贝全部 (Sheets 格式)
                         </button>
-                        <button 
+                        <button
                           onClick={() => setCopywriting(auditResults.map(r => `${r.id} ${r.chinese} ${r.correctedEnglish}`).join('\n'))}
                           className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1.5"
                         >
