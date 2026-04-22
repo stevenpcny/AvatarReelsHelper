@@ -894,9 +894,9 @@ export default function App() {
         setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
         
         const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
-        // Only audit pure-English paragraphs (no Chinese characters at all).
-        // Any paragraph containing Chinese is skipped regardless of embedded English.
-        const auditableItems = batchItems.filter(item => !item.chinese);
+        // Audit any paragraph that has English content (skip pure-Chinese with no English).
+        // Bilingual paragraphs (Chinese + English) are included — only the English part is sent to AI.
+        const auditableItems = batchItems.filter(item => item.english && item.english.trim().length > 0);
 
         if (auditableItems.length === 0) {
           processingIndex += currentBatchSizeToUse;
