@@ -877,7 +877,12 @@ export default function App() {
         setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
         
         const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
-        const batchText = batchItems.map(item => `${item.id}. ${item.english}`).join('\n\n');
+        // Send full paragraph (Chinese + English) so mixed-language segments are handled correctly.
+        // If english is empty (English fragments buried inside Chinese), fall back to full text.
+        const batchText = batchItems.map(item => {
+          const full = [item.chinese, item.english].filter(Boolean).join(' ');
+          return `${item.id}. ${full}`;
+        }).join('\n\n');
         
         const traceId = generateTraceId();
         setCurrentTraceId(traceId);
@@ -905,10 +910,11 @@ export default function App() {
           
           特别注意：
           1. 识别以自然数字（1, 2, 3...）开头的段落。
-          2. 仅对英文部分进行纠错。
+          2. 每段可能包含中文和英文混合内容（英文片段可能夹在中文之间）。请找出所有英文部分并进行纠错。
           3. 绝对不要纠正介词搭配。
           4. 绝对不要进行风格润色或改写。
-          5. 返回的 originalEnglish, markupEnglish, correctedEnglish 中，必须去除开头的序号和点号（例如不要返回 "1. Hello"，只返回 "Hello"）。
+          5. 绝对不要修改中文内容。
+          6. 返回的 originalEnglish, markupEnglish, correctedEnglish 只包含英文内容（去除序号和点号）。若该段无英文，返回空字符串。
           6. 返回结果中包含：
              - id: 序号
              - originalEnglish: 原始英文部分（不含序号）
@@ -1427,7 +1433,6 @@ export default function App() {
         <div className="flex items-center gap-16">
           {[
             { id: 'match', name: '文案匹配', icon: <Type className="w-5 h-5" /> },
-            { id: 'edit', name: 'AI 修图', icon: <Wand2 className="w-5 h-5" /> },
           ].map(module => (
             <button
               key={module.id}
@@ -2093,7 +2098,7 @@ export default function App() {
                         <div key={i} className="apple-card overflow-hidden flex flex-col transition-all hover:shadow-md">
                           <div className="px-6 py-4 bg-neutral-50/50 border-b border-neutral-100 flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                              <span className="px-2 py-0.5 bg-neutral-200 text-[10px] font-black text-neutral-500 rounded-md uppercase tracking-widest">段落 {res.id}</span>
+                              <span className="px-2 py-0.5 bg-emerald-100 text-[10px] font-black text-emerald-700 rounded-md uppercase tracking-widest">段落 {res.id}</span>
                               <span className="text-base font-bold text-neutral-800">{res.chinese}</span>
                             </div>
                             <div className="text-[10px] font-medium text-neutral-400">
