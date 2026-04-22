@@ -171,9 +171,25 @@ export default function App() {
   const [autoOptimizeImages, setAutoOptimizeImages] = useState(false);
   const [selectedAuditOptions, setSelectedAuditOptions] = useState<Set<string>>(new Set(['spelling', 'case', 'punctuation', 'sequence']));
   const [auditInstructions, setAuditInstructions] = useState<Record<string, string>>({
-    spelling: '仅纠正拼写错误。请勿修改介词搭配，请勿进行风格润色。',
-    case: '仅纠正大小写错误，确保句子首字母大写及专有名词规范。请勿修改介词搭配。',
-    punctuation: '仅纠正标点符号和格式错误。请勿修改介词搭配。',
+    spelling: `仅纠正明显的拼写错误。
+注意以下情况【不需要修改】：
+- 全大写单词（如 AMEN、HALLELUJAH、LORD、JESUS、HOLY）：这是口语强调写法，保持原样。
+- 口语化缩写或非正式拼写（如 gonna、wanna、gotta）：口语文案，保持原样。
+- 介词搭配：即使不符合书面语规范，口语中成立的搭配不修改。
+- 风格润色：不做任何改写或润色。`,
+    case: `仅纠正大小写错误。需要大写的情况：
+1. 句子首字母。
+2. 神学专有名词：God、Jesus、Christ、Lord、Father、Holy Spirit、Spirit、Savior、Messiah、Heaven、Scripture、Bible、Word（指圣经时）。
+3. 指代上帝/耶稣的代词：He、Him、His、You、Your（在指代神的语境中）。
+注意以下情况【不需要修改】：
+- 全大写单词（如 AMEN、HALLELUJAH、PRAISE）：口语强调写法，保持原样。
+- 介词搭配：不修改。`,
+    punctuation: `仅纠正明显的标点错误（如句末缺少标点、引号不配对）。
+注意以下情况【不需要修改】：
+- 连续感叹号（如 !!!）或连续问号（如 ???）：口语情感强调，保持原样。
+- 省略号（...）：用于口语停顿节奏，保持原样。
+- 句子结构不完整（如 "Please Amen." "Thank You Jesus."）：口语文案中成立，不补全。
+- 介词搭配：不修改。`,
     sequence: '识别以数字序号（如 1, 2, 3）开头的段落。删除序号内部的多余空格和换行符，确保每个序号后紧跟完整的一段话。',
     custom: ''
   });
