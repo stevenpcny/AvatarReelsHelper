@@ -214,6 +214,7 @@ export default function App() {
   const [gridSize, setGridSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedAuditIds, setSelectedAuditIds] = useState<Set<string>>(new Set());
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -2092,7 +2093,23 @@ export default function App() {
                           <Trash2 className="w-3.5 h-3.5" />
                           清空结果
                         </button>
-                        <button 
+                        {selectedAuditIds.size > 0 && (
+                          <button
+                            onClick={() => {
+                              const lines = auditResults
+                                .filter(r => selectedAuditIds.has(r.id))
+                                .map(r => r.correctedEnglish)
+                                .join('\n');
+                              copyToClipboard(lines);
+                              setSelectedAuditIds(new Set());
+                            }}
+                            className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded-lg flex items-center gap-1.5 transition-all"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            复制已选 ({selectedAuditIds.size})
+                          </button>
+                        )}
+                        <button
                           onClick={() => {
                             const tsv = auditResults.map(r => `${r.id}\t${r.chinese}\t${r.correctedEnglish}`).join('\n');
                             copyToClipboard(tsv);
@@ -2113,10 +2130,28 @@ export default function App() {
                     </div>
                     
                     <div className="grid grid-cols-1 gap-4">
-                      {auditResults.map((res, i) => (
-                        <div key={i} className="apple-card overflow-hidden flex flex-col transition-all hover:shadow-md">
+                      {auditResults.map((res, i) => {
+                        const isAuditSelected = selectedAuditIds.has(res.id);
+                        return (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            setSelectedAuditIds(prev => {
+                              const next = new Set(prev);
+                              next.has(res.id) ? next.delete(res.id) : next.add(res.id);
+                              return next;
+                            });
+                          }}
+                          className={`apple-card overflow-hidden flex flex-col transition-all cursor-pointer select-none
+                            ${isAuditSelected
+                              ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-100'
+                              : 'hover:shadow-md'}`}
+                        >
                           <div className="px-6 py-4 bg-neutral-50/50 border-b border-neutral-100 flex items-center justify-between">
                             <div className="flex items-center gap-3">
+                              {isAuditSelected
+                                ? <CheckSquare className="w-4 h-4 text-blue-500 shrink-0" />
+                                : <Square className="w-4 h-4 text-neutral-300 shrink-0" />}
                               <span className="px-2 py-0.5 bg-emerald-100 text-[10px] font-black text-emerald-700 rounded-md uppercase tracking-widest">段落 {res.id}</span>
                               <span className="text-base font-bold text-neutral-800">{res.chinese}</span>
                             </div>
@@ -2160,7 +2195,8 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </motion.div>
                 )}
