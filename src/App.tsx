@@ -877,12 +877,21 @@ export default function App() {
         setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
         
         const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
-        // Send full paragraph (Chinese + English) so mixed-language segments are handled correctly.
-        // If english is empty (English fragments buried inside Chinese), fall back to full text.
-        const batchText = batchItems.map(item => {
-          const full = [item.chinese, item.english].filter(Boolean).join(' ');
-          return `${item.id}. ${full}`;
-        }).join('\n\n');
+        // Only audit segments with substantial English content.
+        // Skip pure-Chinese paragraphs and those with only tiny embedded English fragments.
+        const hasSubstantialEnglish = (eng: string) => {
+          const trimmed = eng.trim();
+          const wordCount = trimmed.split(/\s+/).filter(w => /[a-zA-Z]{2,}/.test(w)).length;
+          return trimmed.length >= 10 && wordCount >= 2;
+        };
+        const auditableItems = batchItems.filter(item => hasSubstantialEnglish(item.english));
+
+        if (auditableItems.length === 0) {
+          processingIndex += currentBatchSizeToUse;
+          continue;
+        }
+
+        const batchText = auditableItems.map(item => `${item.id}. ${item.english}`).join('\n\n');
         
         const traceId = generateTraceId();
         setCurrentTraceId(traceId);
@@ -910,11 +919,10 @@ export default function App() {
           
           特别注意：
           1. 识别以自然数字（1, 2, 3...）开头的段落。
-          2. 每段可能包含中文和英文混合内容（英文片段可能夹在中文之间）。请找出所有英文部分并进行纠错。
+          2. 仅对英文部分进行纠错。
           3. 绝对不要纠正介词搭配。
           4. 绝对不要进行风格润色或改写。
-          5. 绝对不要修改中文内容。
-          6. 返回的 originalEnglish, markupEnglish, correctedEnglish 只包含英文内容（去除序号和点号）。若该段无英文，返回空字符串。
+          5. 返回的 originalEnglish, markupEnglish, correctedEnglish 中，必须去除开头的序号和点号（例如不要返回 "1. Hello"，只返回 "Hello"）。
           6. 返回结果中包含：
              - id: 序号
              - originalEnglish: 原始英文部分（不含序号）
@@ -945,7 +953,7 @@ export default function App() {
 
           const batchResults = JSON.parse(cleanText);
           const mergedResults = batchResults.map((res: any) => {
-            const localItem = batchItems.find(item => item.id === String(res.id)) || batchItems[0];
+            const localItem = auditableItems.find(item => item.id === String(res.id)) || auditableItems[0];
             const stripLeadingId = (text: string) => text ? text.replace(/^(\d+[\.\s\t]+)/, '').trim() : '';
             return {
               ...res,
