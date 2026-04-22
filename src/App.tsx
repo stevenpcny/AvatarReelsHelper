@@ -51,7 +51,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (token: string) => void }) {
       if (!res.ok) throw new Error('访问码错误，请重试');
       const data = await res.json();
       localStorage.setItem('access-token', data.token);
-      onSuccess(data.token);
+      window.location.reload();
     } catch (err: any) {
       setError(err.message);
     } finally {
