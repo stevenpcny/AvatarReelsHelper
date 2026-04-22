@@ -1076,7 +1076,8 @@ export default function App() {
     const [copied, setCopied] = useState(false);
     const [hasBeenCopied, setHasBeenCopied] = useState(false);
     
-    const handleCopy = () => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.stopPropagation();
       navigator.clipboard.writeText(text);
       setCopied(true);
       setHasBeenCopied(true);
@@ -1084,7 +1085,7 @@ export default function App() {
     };
 
     return (
-      <div 
+      <div
         onClick={handleCopy}
         className={`relative cursor-pointer group transition-all duration-300 ${className} ${
           copied ? 'ring-2 ring-red-400 ring-offset-2' : ''
