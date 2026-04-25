@@ -833,44 +833,88 @@ export default function App() {
         .map(id => `- ${id === 'custom' ? '自定义指令' : id}: ${auditInstructions[id]}`)
         .join('\n');
 
-      // Split text into segments by number (e.g., "1. ", "2. ")
-      // Handles cases where segments are joined without newlines (e.g. "English.1 中文")
-      const segmentRegex = /(^|[\n\s.!?\"'])(\d{1,3}[\.\s\t]+)(?=[\""'‘\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
-      const segments: string[] = [];
-      const matches = Array.from(textToProcess.matchAll(segmentRegex)) as RegExpMatchArray[];
-      
-      if (matches.length === 0) {
-        segments.push(textToProcess);
+      // ── Format detection ─────────────────────────────────────────────────────
+      // TSV format: rows like  "1[TAB]Chinese text[TAB]English text"
+      // Inline format: "1. 中文内容 English content"
+      const isTSV = /^\d+\t/m.test(textToProcess);
+
+      type Segment = { id: string; chinese: string; english: string };
+      const parsedSegments: Segment[] = [];
+
+      if (isTSV) {
+        // ── TSV parser ──────────────────────────────────────────────────────
+        // Find every row that starts with a number followed by a tab.
+        const rowStartRegex = /^(\d+)\t/gm;
+        const rowStarts = Array.from(textToProcess.matchAll(rowStartRegex)) as RegExpMatchArray[];
+
+        const stripQuotes = (s: string) =>
+          s.replace(/^[\s\u201c"]+|[\s\u201d"]+$/g, '').trim();
+
+        for (let i = 0; i < rowStarts.length; i++) {
+          const start = rowStarts[i].index!;
+          const end = i + 1 < rowStarts.length ? rowStarts[i + 1].index! : textToProcess.length;
+          const rowText = textToProcess.slice(start, end);
+          const id = rowStarts[i][1];
+
+          // Remove leading "id\t"
+          const withoutId = rowText.slice(id.length + 1);
+
+          // Split on the first tab to get Chinese column vs English column
+          const tabIdx = withoutId.indexOf('\t');
+          let chinese = '';
+          let english = '';
+          if (tabIdx !== -1) {
+            chinese = stripQuotes(withoutId.slice(0, tabIdx));
+            english = stripQuotes(withoutId.slice(tabIdx + 1));
+          } else {
+            // Only one column — determine by presence of Chinese characters
+            const hasChinese = /[\u4e00-\u9fa5]/.test(withoutId);
+            if (hasChinese) chinese = stripQuotes(withoutId);
+            else english = stripQuotes(withoutId);
+          }
+          parsedSegments.push({ id, chinese, english });
+        }
       } else {
-        for (let i = 0; i < matches.length; i++) {
-          const start = matches[i].index! + matches[i][1].length;
-          const nextMatch = matches[i + 1];
-          const end = nextMatch ? (nextMatch.index! + nextMatch[1].length) : textToProcess.length;
-          segments.push(textToProcess.substring(start, end).trim());
+        // ── Inline parser ───────────────────────────────────────────────────
+        // Split text into segments by number (e.g., "1. ", "2. ")
+        // Handles cases where segments are joined without newlines
+        const segmentRegex = /(^|[\n\s.!?\"\'\u201c\u201d])(\d{1,3}[\.\s\t]+)(?=[\u201c"\u2018\'\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
+        const segments: string[] = [];
+        const matches = Array.from(textToProcess.matchAll(segmentRegex)) as RegExpMatchArray[];
+
+        if (matches.length === 0) {
+          segments.push(textToProcess);
+        } else {
+          for (let i = 0; i < matches.length; i++) {
+            const start = matches[i].index! + matches[i][1].length;
+            const nextMatch = matches[i + 1];
+            const end = nextMatch ? (nextMatch.index! + nextMatch[1].length) : textToProcess.length;
+            segments.push(textToProcess.substring(start, end).trim());
+          }
+        }
+
+        for (const segment of segments) {
+          const idMatch = segment.match(/^(\d+[\.\s\t]+)/);
+          const idStr = idMatch ? idMatch[1] : '';
+          const rest = segment.substring(idStr.length);
+          let lastChineseIndex = -1;
+          const chineseRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/;
+          for (let i = 0; i < rest.length; i++) {
+            if (chineseRegex.test(rest[i])) lastChineseIndex = i;
+          }
+          if (lastChineseIndex !== -1) {
+            const trailingPunctuation = /^[\s\u201c\u201d"\u2018\u2019\'\)\]}>]+/;
+            const match = rest.substring(lastChineseIndex + 1).match(trailingPunctuation);
+            if (match) lastChineseIndex += match[0].length;
+          }
+          const chinese = lastChineseIndex !== -1 ? rest.substring(0, lastChineseIndex + 1).trim() : '';
+          const english = lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim();
+          const id = idStr ? idStr.replace(/[\.\s\t]+$/, '') : '1';
+          parsedSegments.push({ id, chinese, english });
         }
       }
 
-      const parsedSegments = segments.map(segment => {
-        const idMatch = segment.match(/^(\d+[\.\s\t]+)/);
-        const idStr = idMatch ? idMatch[1] : '';
-        const rest = segment.substring(idStr.length);
-        let lastChineseIndex = -1;
-        const chineseRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/;
-        for (let i = 0; i < rest.length; i++) {
-          if (chineseRegex.test(rest[i])) lastChineseIndex = i;
-        }
-        if (lastChineseIndex !== -1) {
-          const trailingPunctuation = /^[\s""'’\)\]}>]+/;
-          const match = rest.substring(lastChineseIndex + 1).match(trailingPunctuation);
-          if (match) lastChineseIndex += match[0].length;
-        }
-        const chinese = lastChineseIndex !== -1 ? rest.substring(0, lastChineseIndex + 1).trim() : '';
-        const english = lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim();
-        const id = idStr ? idStr.replace(/[\.\s\t]+$/, '') : '1';
-        return { id, chinese, english };
-      });
-
-      const uniqueParsedSegments: typeof parsedSegments = [];
+      const uniqueParsedSegments: Segment[] = [];
       const seenIds = new Set<string>();
       for (const seg of parsedSegments) {
         if (!seenIds.has(seg.id)) {
@@ -940,6 +984,7 @@ export default function App() {
              - originalEnglish: 原始英文部分（不含序号）
              - markupEnglish: 带有修改标记的英文（使用 ~~删除~~ 和 **新增** 标记差异，不含序号）
              - correctedEnglish: 修正后的纯净英文（不含序号）
+          7. 关于 markupEnglish 的关键规则：只标记【实际发生了改变】的词。如果原文某个词已经是正确的（例如 He、His、Your 已经大写），则不要用任何标记包裹它，直接原样输出。markupEnglish 中有标记的部分必须与 originalEnglish 和 correctedEnglish 之间的实际差异完全对应。
           
           请以 JSON 数组格式返回结果。
           示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]`,
