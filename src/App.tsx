@@ -215,6 +215,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAuditIds, setSelectedAuditIds] = useState<Set<string>>(new Set());
+  const [copiedAuditTextKeys, setCopiedAuditTextKeys] = useState<Set<string>>(new Set());
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -303,6 +304,15 @@ export default function App() {
       }
     }
 
+    const savedCopiedAuditTextKeys = localStorage.getItem('copy-matcher-copied-audit-text-keys');
+    if (savedCopiedAuditTextKeys) {
+      try {
+        setCopiedAuditTextKeys(new Set(JSON.parse(savedCopiedAuditTextKeys)));
+      } catch (e) {
+        console.error("Failed to parse copied audit text keys", e);
+      }
+    }
+
     const savedAuditOptions = localStorage.getItem('copy-matcher-audit-options');
     if (savedAuditOptions) {
       try {
@@ -377,6 +387,14 @@ export default function App() {
       console.warn("Failed to save audit options", e);
     }
   }, [selectedAuditOptions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('copy-matcher-copied-audit-text-keys', JSON.stringify(Array.from(copiedAuditTextKeys)));
+    } catch (e) {
+      console.warn("Failed to save copied audit text keys", e);
+    }
+  }, [copiedAuditTextKeys]);
 
   useEffect(() => {
     try {
@@ -826,6 +844,7 @@ export default function App() {
     setAuditTechnicalError(null);
     setRetryStatus(null);
     setAuditResults([]);
+    setCopiedAuditTextKeys(new Set());
     setActiveModelId("gemini-3-flash-preview"); // Reset to primary
     
     try {
@@ -1117,15 +1136,14 @@ export default function App() {
     );
   };
 
-  const CopyableText = ({ text, children, className = "" }: { text: string, children: React.ReactNode, className?: string }) => {
+  const CopyableText = ({ text, children, className = "", hasBeenCopied = false, onCopy }: { text: string, children: React.ReactNode, className?: string, hasBeenCopied?: boolean, onCopy?: () => void }) => {
     const [copied, setCopied] = useState(false);
-    const [hasBeenCopied, setHasBeenCopied] = useState(false);
     
     const handleCopy = (e: React.MouseEvent) => {
       e.stopPropagation();
       navigator.clipboard.writeText(text);
       setCopied(true);
-      setHasBeenCopied(true);
+      onCopy?.();
       setTimeout(() => setCopied(false), 2000);
     };
 
@@ -1175,6 +1193,7 @@ export default function App() {
       content = JSON.stringify({
         copywriting,
         auditResults,
+        copiedAuditTextKeys: Array.from(copiedAuditTextKeys),
         timestamp: new Date().toISOString()
       }, null, 2);
       fileName += '.json';
@@ -1202,6 +1221,8 @@ export default function App() {
         const data = JSON.parse(event.target?.result as string);
         if (data.copywriting !== undefined) setCopywriting(data.copywriting);
         if (data.auditResults !== undefined) setAuditResults(data.auditResults);
+        if (data.copiedAuditTextKeys !== undefined) setCopiedAuditTextKeys(new Set(data.copiedAuditTextKeys));
+        else setCopiedAuditTextKeys(new Set());
         alert('备份恢复成功！');
       } catch (err) {
         console.error('Failed to parse backup file', err);
@@ -2007,6 +2028,7 @@ export default function App() {
                           if (window.confirm('确定要清空当前文案和质检结果，开始新的任务吗？')) {
                             setCopywriting('');
                             setAuditResults([]);
+                            setCopiedAuditTextKeys(new Set());
                             setAuditError(null);
                             setAuditProgress(null);
                           }
@@ -2178,6 +2200,7 @@ export default function App() {
                           onClick={() => {
                             if (window.confirm('确定要清空所有质检结果吗？')) {
                               setAuditResults([]);
+                              setCopiedAuditTextKeys(new Set());
                             }
                           }}
                           className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1.5"
@@ -2210,7 +2233,7 @@ export default function App() {
                         const isAuditSelected = selectedAuditIds.has(res.id);
                         return (
                         <div
-                          key={i}
+                          key={res.id}
                           onClick={() => {
                             setSelectedAuditIds(prev => {
                               const next = new Set(prev);
@@ -2242,7 +2265,12 @@ export default function App() {
                                 <span className="text-[9px] font-black text-neutral-300 uppercase tracking-widest">对比审查 (Markup)</span>
                                 <CopyButton text={res.originalEnglish} />
                               </div>
-                              <CopyableText text={res.originalEnglish} className="rounded-2xl">
+                              <CopyableText
+                                text={res.originalEnglish}
+                                className="rounded-2xl"
+                                hasBeenCopied={copiedAuditTextKeys.has(`${res.id}:original`)}
+                                onCopy={() => setCopiedAuditTextKeys(prev => new Set(prev).add(`${res.id}:original`))}
+                              >
                                 <div className="p-4 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200 text-sm leading-relaxed text-neutral-500 min-h-[80px]">
                                   {res.markupEnglish.split(/(\*\*.*?\*\*|~~.*?~~)/).map((part, idx) => {
                                     if (part.startsWith('**') && part.endsWith('**')) {
@@ -2263,7 +2291,12 @@ export default function App() {
                                 <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">修正结果</span>
                                 <CopyButton text={res.correctedEnglish} />
                               </div>
-                              <CopyableText text={res.correctedEnglish} className="rounded-2xl">
+                              <CopyableText
+                                text={res.correctedEnglish}
+                                className="rounded-2xl"
+                                hasBeenCopied={copiedAuditTextKeys.has(`${res.id}:corrected`)}
+                                onCopy={() => setCopiedAuditTextKeys(prev => new Set(prev).add(`${res.id}:corrected`))}
+                              >
                                 <div className="p-4 bg-blue-50/30 rounded-2xl border border-blue-100 text-sm font-medium leading-relaxed text-neutral-800 min-h-[80px]">
                                   {res.correctedEnglish}
                                 </div>
