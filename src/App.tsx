@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Upload, Wand2, Download, RefreshCcw,
   Image as ImageIcon, Loader2, AlertCircle,
@@ -13,6 +13,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOpenRouterApiKey } from './utils/env';
+import { ImageLibrary } from './components/ImageLibrary';
+import {
+  loadMatchMap, saveMatchMap, INTERNAL_IMAGE_MIME,
+  type MatchMap, type LoadedImage,
+} from './utils/imageMatch';
 
 interface ImageItem {
   id: string;
@@ -252,6 +257,14 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAuditIds, setSelectedAuditIds] = useState<Set<string>>(new Set());
   const [copiedAuditTextKeys, setCopiedAuditTextKeys] = useState<Set<string>>(new Set());
+  const [matchMap, setMatchMap] = useState<MatchMap>({});
+  const [matchMapLoaded, setMatchMapLoaded] = useState(false);
+  const [libraryImages, setLibraryImages] = useState<LoadedImage[]>([]);
+  const fileByName = useMemo(() => {
+    const m: Record<string, LoadedImage> = {};
+    for (const img of libraryImages) m[img.name] = img;
+    return m;
+  }, [libraryImages]);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -391,6 +404,55 @@ export default function App() {
       }
     }
   }, []);
+
+  // Load persisted image-match map from IndexedDB
+  useEffect(() => {
+    loadMatchMap().then(m => {
+      setMatchMap(m);
+      setMatchMapLoaded(true);
+    }).catch(() => setMatchMapLoaded(true));
+  }, []);
+
+  // Persist match map whenever it changes (skip first load before hydration)
+  useEffect(() => {
+    if (!matchMapLoaded) return;
+    saveMatchMap(matchMap).catch(e => console.warn('Failed to save match map', e));
+  }, [matchMap, matchMapLoaded]);
+
+  // Build the File[] payload when an audit row's image slot is dragged out.
+  // If the row is part of a multi-row selection, bundle every selected row
+  // that has a matched image (in audit-list order). Otherwise just this row.
+  const collectDragFiles = (originId: string): File[] => {
+    const ids = selectedAuditIds.has(originId) && selectedAuditIds.size > 1
+      ? auditResults.map(r => r.id).filter(id => selectedAuditIds.has(id))
+      : [originId];
+    const out: File[] = [];
+    const seen = new Set<File>();
+    for (const id of ids) {
+      const name = matchMap[id];
+      if (!name) continue;
+      const img = fileByName[name];
+      if (!img || seen.has(img.file)) continue;
+      seen.add(img.file);
+      out.push(img.file);
+    }
+    return out;
+  };
+
+  // Drop stale entries when audit results change (id no longer present)
+  useEffect(() => {
+    if (!matchMapLoaded) return;
+    const validIds = new Set(auditResults.map(r => r.id));
+    setMatchMap(prev => {
+      let changed = false;
+      const next: MatchMap = {};
+      for (const [id, name] of Object.entries(prev) as [string, string][]) {
+        if (validIds.has(id)) next[id] = name;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [auditResults, matchMapLoaded]);
 
   // Persistence effects
   useEffect(() => {
@@ -1545,12 +1607,18 @@ export default function App() {
   const selectedImage = images.find(img => img.id === selectedImageId);
 
   return (
-    <div 
+    <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
     >
+      {auditResults.length > 0 && (
+        <ImageLibrary
+          matchMap={matchMap}
+          onImagesLoaded={setLibraryImages}
+        />
+      )}
       {/* Top Navigation Bar */}
       <header className="h-11 bg-white border-b border-neutral-200 flex items-center px-4 z-40 shrink-0 gap-3">
         <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
@@ -2234,6 +2302,8 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2.5">
                       {auditResults.map((res, i) => {
                         const isAuditSelected = selectedAuditIds.has(res.id);
+                        const matchedName = matchMap[res.id];
+                        const matchedImg = matchedName ? fileByName[matchedName] : undefined;
                         return (
                         <div
                           key={res.id}
@@ -2257,8 +2327,22 @@ export default function App() {
                               <span className="px-1.5 py-0.5 bg-emerald-100 text-[9px] font-black text-emerald-700 rounded uppercase tracking-widest">{res.id}</span>
                               <span className="text-sm font-semibold text-neutral-800">{res.chinese}</span>
                             </div>
-                            <div className="text-[10px] font-medium text-neutral-400 shrink-0">
-                              <span className={`font-bold ${getCharCountColor(res.correctedEnglish.length)}`}>{res.correctedEnglish.length}</span>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <div className="text-[10px] font-medium text-neutral-400">
+                                <span className={`font-bold ${getCharCountColor(res.correctedEnglish.length)}`}>{res.correctedEnglish.length}</span>
+                              </div>
+                              <AuditImageSlot
+                                copyId={res.id}
+                                matchedImg={matchedImg}
+                                matchedName={matchedName}
+                                isSelected={isAuditSelected}
+                                onDropImage={(name) => setMatchMap(prev => ({ ...prev, [res.id]: name }))}
+                                onClear={() => setMatchMap(prev => {
+                                  const { [res.id]: _, ...rest } = prev;
+                                  return rest;
+                                })}
+                                onDragStartFiles={() => collectDragFiles(res.id)}
+                              />
                             </div>
                           </div>
                           <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2910,6 +2994,91 @@ export default function App() {
           background: #d1d5db;
         }
       `}</style>
+    </div>
+  );
+}
+
+// ── Audit row image slot ─────────────────────────────────────────────────────
+interface AuditImageSlotProps {
+  copyId: string;
+  matchedImg?: LoadedImage;
+  matchedName?: string;
+  isSelected: boolean;
+  onDropImage: (filename: string) => void;
+  onClear: () => void;
+  /** Returns the list of files to attach to dataTransfer when this slot is dragged. */
+  onDragStartFiles: () => File[];
+}
+
+function AuditImageSlot({
+  matchedImg, matchedName, onDropImage, onClear, onDragStartFiles,
+}: AuditImageSlotProps) {
+  const [over, setOver] = useState(false);
+
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOver(false);
+    const name = e.dataTransfer.getData(INTERNAL_IMAGE_MIME);
+    if (name) onDropImage(name);
+  };
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.stopPropagation();
+    const files = onDragStartFiles();
+    if (files.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    for (const f of files) e.dataTransfer.items.add(f);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  return (
+    <div
+      onClick={stop}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(INTERNAL_IMAGE_MIME)) {
+          e.preventDefault();
+          e.stopPropagation();
+          setOver(true);
+        }
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={handleDrop}
+      draggable={!!matchedImg}
+      onDragStart={handleDragStart}
+      title={matchedImg
+        ? `${matchedName} — 拖到 Heygen 上传`
+        : '将右侧图片拖到这里完成匹配'}
+      className={`relative w-[60px] h-[60px] rounded-lg shrink-0 transition-all
+        ${matchedImg
+          ? 'cursor-grab active:cursor-grabbing border border-neutral-200 hover:border-blue-400 hover:shadow-md'
+          : 'border-2 border-dashed border-neutral-300 bg-neutral-50 flex items-center justify-center'}
+        ${over ? 'ring-2 ring-blue-400 border-blue-400 scale-105' : ''}`}
+    >
+      {matchedImg ? (
+        <>
+          <img
+            src={matchedImg.url}
+            alt={matchedImg.name}
+            draggable={false}
+            className="w-full h-full object-cover rounded-lg pointer-events-none"
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); onClear(); }}
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow opacity-0 hover:opacity-100 group-hover:opacity-100"
+            style={{ opacity: 1 }}
+            title="清除匹配"
+          >
+            ×
+          </button>
+        </>
+      ) : (
+        <span className="text-[9px] text-neutral-400 font-bold">拖图</span>
+      )}
     </div>
   );
 }
