@@ -1620,6 +1620,8 @@ export default function App() {
         <ImageLibrary
           matchMap={matchMap}
           onImagesLoaded={setLibraryImages}
+          auditResults={auditResults}
+          fileByName={fileByName}
         />
       )}
       {/* Top Navigation Bar */}
