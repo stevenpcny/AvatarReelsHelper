@@ -601,6 +601,8 @@ export default function App() {
   };
 
   const handleDrop = (e: React.DragEvent) => {
+    // Ignore internal image-library drags (handled by the per-row image slot)
+    if (e.dataTransfer.types.includes(INTERNAL_IMAGE_MIME)) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -608,6 +610,7 @@ export default function App() {
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(INTERNAL_IMAGE_MIME)) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
