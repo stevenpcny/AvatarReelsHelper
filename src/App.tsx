@@ -92,6 +92,31 @@ function LoginScreen({ onSuccess }: { onSuccess: (token: string) => void }) {
   );
 }
 
+// ── Word-level diff: computes markup from actual original vs corrected text ───
+function buildMarkup(original: string, corrected: string): string {
+  if (original === corrected) return original;
+  const tokens = (s: string) => s.match(/[^\s]+|\s+/g) ?? [s];
+  const orig = tokens(original);
+  const corr = tokens(corrected);
+  const n = orig.length, m = corr.length;
+  const dp: number[][] = Array.from({length: n + 1}, () => Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++)
+    for (let j = 1; j <= m; j++)
+      dp[i][j] = orig[i-1] === corr[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  const out: string[] = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && orig[i-1] === corr[j-1]) {
+      out.unshift(orig[i-1]); i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      out.unshift(/^\s+$/.test(corr[j-1]) ? corr[j-1] : `**${corr[j-1]}**`); j--;
+    } else {
+      out.unshift(/^\s+$/.test(orig[i-1]) ? orig[i-1] : `~~${orig[i-1]}~~`); i--;
+    }
+  }
+  return out.join('');
+}
+
 // ── Main app ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
@@ -2230,7 +2255,7 @@ export default function App() {
                                 ? <CheckSquare className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                                 : <Square className="w-3.5 h-3.5 text-neutral-300 shrink-0" />}
                               <span className="px-1.5 py-0.5 bg-emerald-100 text-[9px] font-black text-emerald-700 rounded uppercase tracking-widest">{res.id}</span>
-                              <span className="text-sm font-semibold text-neutral-800 truncate max-w-[300px]">{res.chinese}</span>
+                              <span className="text-sm font-semibold text-neutral-800">{res.chinese}</span>
                             </div>
                             <div className="text-[10px] font-medium text-neutral-400 shrink-0">
                               <span className={`font-bold ${getCharCountColor(res.correctedEnglish.length)}`}>{res.correctedEnglish.length}</span>
@@ -2250,7 +2275,7 @@ export default function App() {
                                 onCopy={() => setCopiedAuditTextKeys(prev => new Set(prev).add(`${res.id}:original`))}
                               >
                                 <div className="px-3 py-2 bg-neutral-50 rounded-xl border border-dashed border-neutral-200 text-xs leading-relaxed text-neutral-500 min-h-[56px]">
-                                  {res.markupEnglish.split(/(\*\*.*?\*\*|~~.*?~~)/).map((part, idx) => {
+                                  {buildMarkup(res.originalEnglish, res.correctedEnglish).split(/(\*\*.*?\*\*|~~.*?~~)/).map((part, idx) => {
                                     if (part.startsWith('**') && part.endsWith('**')) {
                                       return <span key={idx} className="bg-green-100 text-green-700 px-0.5 rounded font-bold">{part.slice(2, -2)}</span>;
                                     }
