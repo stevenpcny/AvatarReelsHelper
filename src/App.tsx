@@ -1506,33 +1506,11 @@ export default function App() {
       className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
     >
       {/* Top Navigation Bar */}
-      <header className="h-20 bg-white border-b border-neutral-200 flex items-center justify-center px-6 z-40 shrink-0">
-        <div className="flex items-center gap-16">
-          {[
-            { id: 'match', name: '文案匹配', icon: <Type className="w-5 h-5" /> },
-          ].map(module => (
-            <button
-              key={module.id}
-              onClick={() => setActiveModule(module.id as any)}
-              className={`flex flex-col items-center gap-1.5 transition-all group relative py-1 ${
-                activeModule === module.id ? 'text-blue-600' : 'text-neutral-400 hover:text-neutral-600'
-              }`}
-            >
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                activeModule === module.id ? 'bg-blue-600 text-white shadow-xl shadow-blue-100' : 'bg-neutral-50 group-hover:bg-neutral-100'
-              }`}>
-                {module.icon}
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-widest">{module.name}</span>
-              {activeModule === module.id && (
-                <motion.div 
-                  layoutId="activeTabIndicator"
-                  className="absolute -bottom-2 left-0 right-0 h-1 bg-blue-600 rounded-full"
-                />
-              )}
-            </button>
-          ))}
+      <header className="h-11 bg-white border-b border-neutral-200 flex items-center px-4 z-40 shrink-0 gap-3">
+        <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+          <Type className="w-3.5 h-3.5 text-white" />
         </div>
+        <span className="text-xs font-black text-neutral-700 uppercase tracking-widest">口播工具</span>
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
@@ -1879,26 +1857,21 @@ export default function App() {
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col bg-neutral-50 overflow-hidden">
           {activeModule === 'match' ? (
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-              <div className="max-w-4xl mx-auto space-y-8">
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              <div className="max-w-4xl mx-auto space-y-4">
                 {/* Audit & Match Section */}
-                <div className="bg-white rounded-[2.5rem] border border-neutral-200 shadow-xl shadow-neutral-100 overflow-hidden">
-                  <div className="p-8 border-b border-neutral-100 bg-neutral-50/50 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-100">
-                        <Type className="text-white w-6 h-6" />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-neutral-900">文案质检与匹配</h2>
-                        <p className="text-xs text-neutral-400 font-medium">检查文案、匹配图片并导出结果</p>
-                      </div>
+                <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-neutral-100 bg-neutral-50/50 flex items-center gap-3">
+                    <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center shadow shadow-blue-100 shrink-0">
+                      <Type className="text-white w-3.5 h-3.5" />
                     </div>
+                    <span className="text-sm font-bold text-neutral-900">文案质检与匹配</span>
                   </div>
-                  
-                  <div className="p-8 space-y-8">
+
+                  <div className="p-5 space-y-4">
                     {/* Input Area */}
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between px-2">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1">
                         <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">文案库 (支持 1. 中 2. 英 格式)</span>
                         <span className={`text-[10px] font-bold ${getCharCountColor(copywriting.length)}`}>{copywriting.length} 字符</span>
                       </div>
@@ -1907,58 +1880,54 @@ export default function App() {
                         onChange={(e) => setCopywriting(e.target.value)}
                         onPaste={handlePaste}
                         placeholder="1 中文内容 English content...&#10;2 中文内容 English content..."
-                        className={`w-full h-64 px-6 py-4 rounded-3xl border focus:ring-4 outline-none text-base leading-relaxed resize-none font-mono transition-all duration-500 ${
-                          isPasted 
-                            ? 'bg-green-50 border-green-400 ring-green-500/20 text-green-800' 
+                        className={`w-full h-36 px-4 py-3 rounded-xl border focus:ring-2 outline-none text-sm leading-relaxed resize-none font-mono transition-all duration-500 ${
+                          isPasted
+                            ? 'bg-green-50 border-green-400 ring-green-500/20 text-green-800'
                             : 'bg-neutral-50/50 border-neutral-200 focus:ring-blue-500/10 focus:border-blue-500'
                         }`}
                       />
                     </div>
 
-                    {/* Options Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Options Row */}
+                    <div className="flex flex-wrap gap-2">
                       {[
-                        { id: 'spelling', name: '拼写校对', desc: '纠正拼写错误' },
-                        { id: 'case', name: '大小写规范', desc: '统一专业名词' },
-                        { id: 'punctuation', name: '标点格式化', desc: '规范全半角符号' },
-                        { id: 'sequence', name: '序列清洗', desc: '重构序号与空格' }
+                        { id: 'spelling', name: '拼写校对' },
+                        { id: 'case', name: '大小写规范' },
+                        { id: 'punctuation', name: '标点格式化' },
+                        { id: 'sequence', name: '序列清洗' }
                       ].map(opt => (
-                        <button
-                          key={opt.id}
-                          onClick={() => toggleAuditOption(opt.id)}
-                          className={`p-4 rounded-2xl border text-left transition-all relative group ${
-                            selectedAuditOptions.has(opt.id) 
-                              ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/5' 
-                              : 'bg-white border-neutral-100 hover:border-neutral-200'
-                          }`}
-                        >
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 transition-all ${
-                            selectedAuditOptions.has(opt.id) ? 'bg-blue-600 text-white' : 'bg-neutral-50 text-neutral-400'
-                          }`}>
-                            <Type className="w-4 h-4" />
-                          </div>
-                          <p className={`text-xs font-bold mb-1 ${selectedAuditOptions.has(opt.id) ? 'text-blue-600' : 'text-neutral-700'}`}>{opt.name}</p>
-                          <p className="text-[10px] text-neutral-400 leading-tight">{opt.desc}</p>
-                          <div 
-                            onClick={(e) => { e.stopPropagation(); openAuditEdit(opt.id); }}
-                            className="absolute top-4 right-4 p-1.5 text-neutral-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-white"
+                        <div key={opt.id} className="flex items-center gap-1">
+                          <button
+                            onClick={() => toggleAuditOption(opt.id)}
+                            className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+                              selectedAuditOptions.has(opt.id)
+                                ? 'bg-blue-600 border-blue-600 text-white'
+                                : 'bg-white border-neutral-200 text-neutral-500 hover:border-neutral-300'
+                            }`}
                           >
-                            <Settings2 className="w-3.5 h-3.5" />
-                          </div>
-                        </button>
+                            {opt.name}
+                          </button>
+                          <button
+                            onClick={() => openAuditEdit(opt.id)}
+                            className="p-1 text-neutral-300 hover:text-blue-500 transition-all rounded"
+                            title="编辑规则"
+                          >
+                            <Settings2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       ))}
                     </div>
 
                     {/* Custom Prompt */}
-                    <div className="p-6 bg-neutral-50 rounded-3xl border border-neutral-100 space-y-4">
+                    <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-100 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Wand2 className="w-4 h-4 text-blue-600" />
+                        <div className="flex items-center gap-1.5">
+                          <Wand2 className="w-3.5 h-3.5 text-blue-600" />
                           <span className="text-xs font-bold text-neutral-700">自定义质检指令</span>
                         </div>
-                        <button 
+                        <button
                           onClick={() => toggleAuditOption('custom')}
-                          className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-all ${
                             selectedAuditOptions.has('custom') ? 'bg-blue-600 text-white' : 'bg-neutral-200 text-neutral-500'
                           }`}
                         >
@@ -1969,25 +1938,25 @@ export default function App() {
                         value={auditInstructions['custom']}
                         onChange={(e) => setAuditInstructions(prev => ({ ...prev, custom: e.target.value }))}
                         placeholder="输入额外的质检要求，例如：不要纠正介词搭配，不要风格润色..."
-                        className="w-full h-20 px-4 py-3 rounded-2xl border border-neutral-200 focus:ring-2 focus:ring-blue-500 outline-none text-xs leading-relaxed resize-none bg-white"
+                        className="w-full h-14 px-3 py-2 rounded-lg border border-neutral-200 focus:ring-2 focus:ring-blue-500 outline-none text-xs leading-relaxed resize-none bg-white"
                       />
                     </div>
 
-                    <div className="flex gap-4">
+                    <div className="flex gap-3">
                       <button
                         onClick={() => handleAuditCopy()}
                         disabled={isAuditing || isMatching || !copywriting}
-                        className={`flex-[3] py-5 rounded-[2rem] font-bold flex items-center justify-center gap-3 transition-all shadow-xl active:scale-[0.98] ${
+                        className={`flex-[3] py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow active:scale-[0.98] text-sm ${
                           isAuditing || isMatching || !copywriting
                             ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none'
-                            : 'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-blue-200 shadow-blue-100'
+                            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-100'
                         }`}
                       >
                         {isAuditing ? (
-                          <div className="flex flex-col items-center gap-1">
+                          <div className="flex flex-col items-center gap-0.5">
                             <div className="flex items-center gap-2">
-                              <Loader2 className="w-5 h-5 animate-spin" />
-                              <span className="text-sm">正在质检 {auditProgress ? `(${auditProgress})` : ''}</span>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>正在质检 {auditProgress ? `(${auditProgress})` : ''}</span>
                             </div>
                             {retryStatus && (
                               <span className="text-[10px] bg-red-500/20 px-2 py-0.5 rounded-full animate-pulse">
@@ -1995,19 +1964,17 @@ export default function App() {
                               </span>
                             )}
                             {activeModelId !== "gemini-3-flash-preview" && (
-                              <span className="text-[9px] opacity-70">
-                                已自动降级至备选模型加速处理
-                              </span>
+                              <span className="text-[9px] opacity-70">已自动降级至备选模型加速处理</span>
                             )}
                           </div>
                         ) : isMatching ? (
                           <>
-                            <Loader2 className="w-6 h-6 animate-spin" />
+                            <Loader2 className="w-4 h-4 animate-spin" />
                             正在匹配 {auditProgress ? `(${auditProgress})` : ''}...
                           </>
                         ) : (
                           <>
-                            <ShieldCheck className="w-6 h-6" />
+                            <ShieldCheck className="w-4 h-4" />
                             {images.length > 0 ? '开始质检 & 匹配' : '开始质检'}
                           </>
                         )}
@@ -2022,10 +1989,10 @@ export default function App() {
                             setAuditProgress(null);
                           }
                         }}
-                        className="flex-1 py-5 rounded-[2rem] bg-white border-2 border-neutral-100 text-neutral-400 font-bold flex items-center justify-center gap-2 hover:bg-neutral-50 hover:border-neutral-200 transition-all active:scale-[0.98]"
+                        className="flex-1 py-2.5 rounded-xl bg-white border border-neutral-200 text-neutral-400 font-bold flex items-center justify-center gap-1.5 hover:bg-neutral-50 transition-all active:scale-[0.98] text-sm"
                         title="开启新任务"
                       >
-                        <Plus className="w-6 h-6" />
+                        <Plus className="w-4 h-4" />
                         <span className="hidden md:inline">新任务</span>
                       </button>
                     </div>
@@ -2100,8 +2067,8 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-4"
                   >
-                    <div className="flex items-center justify-between px-4">
-                      <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
                         {/* Select-all checkbox: selects all + copies to clipboard */}
                         <button
                           onClick={() => {
@@ -2216,7 +2183,7 @@ export default function App() {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-1 gap-4">
+                    <div className="grid grid-cols-1 gap-2.5">
                       {auditResults.map((res, i) => {
                         const isAuditSelected = selectedAuditIds.has(res.id);
                         return (
@@ -2231,36 +2198,36 @@ export default function App() {
                           }}
                           className={`apple-card overflow-hidden flex flex-col transition-all cursor-pointer select-none
                             ${isAuditSelected
-                              ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-100'
-                              : 'hover:shadow-md'}`}
+                              ? 'ring-2 ring-blue-500 shadow-md shadow-blue-100'
+                              : 'hover:shadow-sm'}`}
                         >
-                          <div className="px-6 py-4 bg-neutral-50/50 border-b border-neutral-100 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
+                          <div className="px-4 py-2 bg-neutral-50/50 border-b border-neutral-100 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
                               {isAuditSelected
-                                ? <CheckSquare className="w-4 h-4 text-blue-500 shrink-0" />
-                                : <Square className="w-4 h-4 text-neutral-300 shrink-0" />}
-                              <span className="px-2 py-0.5 bg-emerald-100 text-[10px] font-black text-emerald-700 rounded-md uppercase tracking-widest">段落 {res.id}</span>
-                              <span className="text-base font-bold text-neutral-800">{res.chinese}</span>
+                                ? <CheckSquare className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                : <Square className="w-3.5 h-3.5 text-neutral-300 shrink-0" />}
+                              <span className="px-1.5 py-0.5 bg-emerald-100 text-[9px] font-black text-emerald-700 rounded uppercase tracking-widest">{res.id}</span>
+                              <span className="text-sm font-semibold text-neutral-800 truncate max-w-[300px]">{res.chinese}</span>
                             </div>
-                            <div className="text-[10px] font-medium text-neutral-400">
-                              字符数: <span className={`font-bold ${getCharCountColor(res.correctedEnglish.length)}`}>{res.correctedEnglish.length}</span>
+                            <div className="text-[10px] font-medium text-neutral-400 shrink-0">
+                              <span className={`font-bold ${getCharCountColor(res.correctedEnglish.length)}`}>{res.correctedEnglish.length}</span>
                             </div>
                           </div>
-                          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                             {/* Original with Markup */}
-                            <div className="space-y-2 group">
+                            <div className="space-y-1 group">
                               <div className="flex items-center justify-between">
-                                <span className="text-[9px] font-black text-neutral-300 uppercase tracking-widest">对比审查 (Markup)</span>
+                                <span className="text-[9px] font-black text-neutral-300 uppercase tracking-widest">对比审查</span>
                                 <CopyButton text={res.originalEnglish} />
                               </div>
-                              <CopyableText text={res.originalEnglish} className="rounded-2xl">
-                                <div className="p-4 bg-neutral-50 rounded-2xl border border-dashed border-neutral-200 text-sm leading-relaxed text-neutral-500 min-h-[80px]">
+                              <CopyableText text={res.originalEnglish} className="rounded-xl">
+                                <div className="px-3 py-2 bg-neutral-50 rounded-xl border border-dashed border-neutral-200 text-xs leading-relaxed text-neutral-500 min-h-[56px]">
                                   {res.markupEnglish.split(/(\*\*.*?\*\*|~~.*?~~)/).map((part, idx) => {
                                     if (part.startsWith('**') && part.endsWith('**')) {
-                                      return <span key={idx} className="bg-green-100 text-green-700 px-1 rounded font-bold">{part.slice(2, -2)}</span>;
+                                      return <span key={idx} className="bg-green-100 text-green-700 px-0.5 rounded font-bold">{part.slice(2, -2)}</span>;
                                     }
                                     if (part.startsWith('~~') && part.endsWith('~~')) {
-                                      return <span key={idx} className="bg-red-100 text-red-700 px-1 rounded line-through">{part.slice(2, -2)}</span>;
+                                      return <span key={idx} className="bg-red-100 text-red-700 px-0.5 rounded line-through">{part.slice(2, -2)}</span>;
                                     }
                                     return part;
                                   })}
@@ -2269,13 +2236,13 @@ export default function App() {
                             </div>
 
                             {/* Corrected */}
-                            <div className="space-y-2 group">
+                            <div className="space-y-1 group">
                               <div className="flex items-center justify-between">
                                 <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">修正结果</span>
                                 <CopyButton text={res.correctedEnglish} />
                               </div>
-                              <CopyableText text={res.correctedEnglish} className="rounded-2xl">
-                                <div className="p-4 bg-blue-50/30 rounded-2xl border border-blue-100 text-sm font-medium leading-relaxed text-neutral-800 min-h-[80px]">
+                              <CopyableText text={res.correctedEnglish} className="rounded-xl">
+                                <div className="px-3 py-2 bg-blue-50/30 rounded-xl border border-blue-100 text-xs font-medium leading-relaxed text-neutral-800 min-h-[56px]">
                                   {res.correctedEnglish}
                                 </div>
                               </CopyableText>
