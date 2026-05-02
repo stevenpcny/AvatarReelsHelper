@@ -285,6 +285,40 @@ const itemsToAudit = batchItems.filter(item => item.english && item.english.trim
 
 ---
 
+## 6. Avatar 图片匹配与跨 Tab 拖拽（图片库）
+
+**功能**：把质检通过的文案与本地 Avatar 图片做 1↔1 匹配（图不够时允许 1↔多复用），匹配状态持久化；用户从我们的页面把图片拖到 Heygen 上传区，等价于从本地文件夹拖文件。
+
+**实现位置**：
+- `src/utils/imageMatch.ts` — IndexedDB 持久化（目录句柄 + 匹配映射）、目录读取、权限申请
+- `src/components/ImageLibrary.tsx` — 右侧固定面板（300px），缩略图 ~120px，2 列网格
+- `src/App.tsx` — `AuditImageSlot` 组件（每条质检结果右侧的配图槽位）+ `collectDragFiles()` 批量拖拽聚合
+
+**关键技术**：
+1. **File System Access API**：`window.showDirectoryPicker()` 选目录，`FileSystemDirectoryHandle` 存入 IndexedDB；下次进入若 `queryPermission` 已授权则直接读，否则展示"授权访问"按钮调 `requestPermission`。
+2. **跨 Tab 拖拽 File**：在 `dragstart` 中 `e.dataTransfer.items.add(file)` 注入真实 `File`，目标站点（Heygen）收到的是标准 `File`，与从 Finder 拖入完全等价。
+3. **批量拖拽**：当源行被勾选且勾选 ≥2 时，从该行槽位 dragstart 会按质检列表顺序把所有已勾选行的匹配图全部加入 `dataTransfer.items`；否则只拖单张。
+4. **图复用**：`matchMap: Record<copyId, imageFilename>` 是多对一关系，缩略图右上角显示被引用次数。
+5. **持久化**：`matchMap` 与目录句柄都写 IndexedDB（`avatar-reels-helper / kv` 库）；浏览器重启也保留。当 `auditResults` 中某 id 消失（如清空重做），自动从 `matchMap` 删除该 id 对应的匹配。
+
+**UX 细节**：
+- 仅在 `auditResults.length > 0` 时挂载图片库面板
+- 面板可左侧三角按钮收起（仍保留状态）
+- 槽位空：虚线框 "拖图"；槽位有图：60×60 缩略图，hover 出现 ×（清除匹配），整块可拖
+- 仅 Chromium 支持 File System Access API；Safari 会在选择文件夹时提示"当前浏览器不支持"
+
+**数据流**：
+```
+选择文件夹 → showDirectoryPicker → DirectoryHandle 入 IndexedDB
+           → 遍历 entries 过滤 jpg/png → File[] + URL.createObjectURL
+缩略图拖入文案槽位 → dataTransfer 携带 INTERNAL_IMAGE_MIME（仅文件名）
+                   → drop 时写入 matchMap → 自动持久化
+文案槽位拖出 → collectDragFiles 聚合（单/批量）→ dataTransfer.items.add(file)
+            → Heygen 接收为真实 File
+```
+
+---
+
 ## 已知限制和改进空间
 
 1. **多行字段处理**: TSV 格式的多行引号字段可能在某些特殊情况下失败
