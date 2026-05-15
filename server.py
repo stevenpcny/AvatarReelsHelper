@@ -5,9 +5,9 @@ Also serves the compiled React frontend from ./dist.
 """
 
 import base64
-import hashlib
+import hmac
 import os
-import secrets
+import time
 from typing import Any, Optional
 
 from google import genai
@@ -25,22 +25,24 @@ client = genai.Client(vertexai=True, project=PROJECT, location=LOCATION)
 # ── Model fallback chains (frontend name → ordered Vertex AI model list) ─────
 MODEL_FALLBACKS: dict[str, list[str]] = {
     # Image generation
-    "gemini-3.1-flash-image-preview": ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
-    "gemini-2.5-flash-image":         ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-3.1-flash-image-preview": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-2.5-flash-image":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     # Text / audit / matching
-    "gemini-3-flash-preview":         ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
-    "gemini-3.0-flash-preview":       ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-3-flash-preview":         ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-3.0-flash-preview":       ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     # Already-valid names — still provide fallback
-    "gemini-2.0-flash-001":           ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
-    "gemini-1.5-flash-8b":            ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
-    "gemini-1.5-flash-8b-001":        ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "gemini-2.0-flash-001":           ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-1.5-flash-8b":            ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini-1.5-flash-8b-001":        ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
 }
 
 # ── Access protection ─────────────────────────────────────────────────────────
 ACCESS_CODE = os.getenv("ACCESS_CODE", "")   # set this env var in Cloud Run
-# Derive a stable token from the code so we never store the code itself
+
 def _make_token(code: str) -> str:
-    return hashlib.sha256(f"avatar-reels-{code}".encode()).hexdigest()
+    # Day-scoped HMAC: token rotates every UTC day, stateless across Cloud Run instances.
+    day = str(int(time.time()) // 86400).encode()
+    return hmac.new(code.encode(), day, "sha256").hexdigest()
 
 app = FastAPI()
 
@@ -128,13 +130,13 @@ class AuthRequest(BaseModel):
 
 @app.post("/api/auth/login")
 async def login(req: AuthRequest):
-    if ACCESS_CODE and req.code != ACCESS_CODE:
+    if ACCESS_CODE and not hmac.compare_digest(req.code, ACCESS_CODE):
         raise HTTPException(status_code=401, detail="访问码错误")
     return {"token": _make_token(ACCESS_CODE)}
 
 @app.get("/api/auth/check")
 async def check(x_access_token: str = Header(default="")):
-    if ACCESS_CODE and x_access_token != _make_token(ACCESS_CODE):
+    if ACCESS_CODE and not hmac.compare_digest(x_access_token, _make_token(ACCESS_CODE)):
         raise HTTPException(status_code=401, detail="未授权")
     return {"ok": True}
 
@@ -143,7 +145,7 @@ async def check(x_access_token: str = Header(default="")):
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest, x_access_token: str = Header(default="")):
-    if ACCESS_CODE and x_access_token != _make_token(ACCESS_CODE):
+    if ACCESS_CODE and not hmac.compare_digest(x_access_token, _make_token(ACCESS_CODE)):
         raise HTTPException(status_code=401, detail="未授权，请刷新页面重新登录")
     model_candidates = MODEL_FALLBACKS.get(req.model, [req.model])
     contents = build_contents(req.contents)
@@ -171,9 +173,11 @@ if os.path.isdir(DIST) and os.path.isdir(os.path.join(DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=f"{DIST}/assets"), name="assets")
 
 
+_DIST_REAL = os.path.realpath(DIST)
+
 @app.get("/{full_path:path}")
 async def spa(full_path: str):
-    candidate = os.path.join(DIST, full_path)
-    if full_path and os.path.isfile(candidate):
+    candidate = os.path.realpath(os.path.join(DIST, full_path))
+    if full_path and os.path.isfile(candidate) and candidate.startswith(_DIST_REAL + os.sep):
         return FileResponse(candidate)
     return FileResponse(os.path.join(DIST, "index.html"))

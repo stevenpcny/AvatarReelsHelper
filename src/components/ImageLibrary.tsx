@@ -1,25 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, ChevronRight, ChevronLeft, AlertCircle, RefreshCcw, Download } from 'lucide-react';
+import { FolderOpen, ChevronRight, ChevronLeft, AlertCircle, RefreshCcw } from 'lucide-react';
 import {
   saveDirHandle, loadDirHandle, clearDirHandle,
   ensureReadPermission, loadImagesFromDir, revokeImageUrls,
-  INTERNAL_IMAGE_MIME, exportMatchedImages,
+  INTERNAL_IMAGE_MIME,
   type LoadedImage,
   type MatchMap,
 } from '../utils/imageMatch';
 
-interface AuditRow { id: string }
-
 interface Props {
   matchMap: MatchMap;
   onImagesLoaded: (imgs: LoadedImage[]) => void;
-  auditResults: AuditRow[];
-  fileByName: Record<string, LoadedImage>;
 }
 
-export function ImageLibrary({ matchMap, onImagesLoaded, auditResults, fileByName }: Props) {
-  const [exporting, setExporting] = useState(false);
-  const [exportMsg, setExportMsg] = useState<string | null>(null);
+export function ImageLibrary({ matchMap, onImagesLoaded }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [needsPermission, setNeedsPermission] = useState(false);
@@ -112,36 +106,6 @@ export function ImageLibrary({ matchMap, onImagesLoaded, auditResults, fileByNam
     }
   };
 
-  const exportSorted = async () => {
-    if (!handleRef.current || exporting) return;
-    setExportMsg(null);
-    const items = auditResults
-      .map(r => {
-        const name = matchMap[r.id];
-        const img = name ? fileByName[name] : undefined;
-        return img ? { id: r.id, file: img.file } : null;
-      })
-      .filter((x): x is { id: string; file: File } => x !== null);
-    if (items.length === 0) {
-      setExportMsg('没有已匹配的图片可导出');
-      return;
-    }
-    const state = await ensureReadPermission(handleRef.current, true);
-    if (state !== 'granted') {
-      setExportMsg('需要文件夹写入权限');
-      return;
-    }
-    setExporting(true);
-    try {
-      const res = await exportMatchedImages(handleRef.current, items);
-      setExportMsg(`已导出 ${res.exported} 张到 ${res.subfolderName}/`);
-    } catch (e: any) {
-      setExportMsg(e?.message ?? '导出失败');
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const forget = async () => {
     revokeImageUrls(images);
     setImages([]);
@@ -199,17 +163,6 @@ export function ImageLibrary({ matchMap, onImagesLoaded, auditResults, fileByNam
             刷新
           </button>
         )}
-        {images.length > 0 && (
-          <button
-            onClick={exportSorted}
-            disabled={exporting}
-            className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 px-2 py-1.5 rounded-lg flex items-center gap-1"
-            title="把已匹配的图片按段落序号导出到子文件夹（无损拷贝）"
-          >
-            <Download className="w-3 h-3" />
-            {exporting ? '导出中…' : '导出排序图片'}
-          </button>
-        )}
         {handleRef.current && (
           <button
             onClick={forget}
@@ -239,12 +192,6 @@ export function ImageLibrary({ matchMap, onImagesLoaded, auditResults, fileByNam
       {error && (
         <div className="m-3 p-2 bg-red-50 border border-red-100 rounded-lg text-[11px] text-red-700">
           {error}
-        </div>
-      )}
-
-      {exportMsg && (
-        <div className="mx-3 mb-2 p-2 bg-emerald-50 border border-emerald-100 rounded-lg text-[11px] text-emerald-700">
-          {exportMsg}
         </div>
       )}
 

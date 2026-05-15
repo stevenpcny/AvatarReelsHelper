@@ -210,18 +210,32 @@ export default function App() {
 - prophesy（动词）与 prophecy（名词）：词性不同，如两者混用则纠正，但各自本身拼写正确。
 - 介词搭配：即使不符合书面语规范，口语中成立的搭配不修改。
 - 风格润色：不做任何改写或润色。`,
-    case: `仅纠正大小写错误。需要大写的情况：
-1. 句子首字母。
-2. 神学专有名词（以下均需大写）：
-   - 神与耶稣的名称/称谓：God、Jesus、Christ、Lord、Father、Holy Spirit、Savior、Messiah、Creator、Redeemer、Almighty、Emmanuel、Immanuel、Lamb（指神的羔羊时）
-   - 圣灵相关：Spirit（仅在明确指圣灵的语境中大写，如 "the Holy Spirit" 或 "the Spirit of God"；泛指人的灵性时不大写）
-   - 神学概念：Trinity、Resurrection、Ascension、Gospel、Cross、Heaven（指神的居所时；泛指天空如 "the heavens" 时不大写）、Kingdom（指神的国度时，如 "the Kingdom of God"）、Church（指普世教会整体时）
-   - 圣典：Scripture、Bible、Word（指圣经或耶稣本身时，如约翰福音 "the Word became flesh"）
-3. 指代上帝/耶稣的代词（传统基督教写法）：He、Him、His、Himself、Who、Whom、Whose、You、Your（仅在语境中明确指代神/耶稣时才大写；如同一句话中 he/him/his 指代的是人而非神，则保持小写）。
-注意以下情况【不需要修改】：
-- 全大写单词（如 AMEN、HALLELUJAH、PRAISE）：口语强调写法，保持原样。
-- he/him/his/you/your 指代人类时：绝对不要大写，哪怕句中同时出现了神的称谓。
-- 圣经经文引用：每个圣经版本（如 KJV、NIV、ESV、NKJV 等）有各自的大小写规范，不得修改引用内容的大小写。识别方式：含有章节引用（如 John 3:16）的句子、或用引号括起来并注明出处的段落，视为圣经引用，保持原样。
+    case: `仅纠正大小写错误。
+
+【代词大小写 — 最重要的规则，必须先执行】
+对 he/him/his/you/your/who/whom/whose 等代词，必须先判断指代对象：
+- 指代上帝/耶稣/圣灵 → 应大写（He、Him、His、You、Your、Who…）
+- 指代对象明确是人/天使/其他受造物 → 应小写
+- 指代对象不明确、或短句中无足够上下文确认 → 【原样保留，不得改动】
+- 原文已大写（如 He、His、Your）→ 除非能100%确认指代的是人，否则不得改为小写
+
+【圣经版本引用 — 整段完全不动】
+不同圣经译本（KJV、NKJV、NIV、ESV、NLT 等）各有自己的大小写规范，原文如此即正确：
+- 含章节引用（如 John 3:16、Psalm 23:1）的句子
+- 任何看起来像是圣经经文逐字引用的段落
+- 以上情况中所有词的大小写，一律不改。
+
+【可以纠正的情况】
+1. 句子首字母明确缺失大写。
+2. 神学专有名词（名称/称谓）的大小写：
+   - 大写：God、Jesus、Christ、Lord、Father、Holy Spirit、Savior、Messiah、Creator、Redeemer、Almighty、Emmanuel、Immanuel、Lamb（指神的羔羊时）
+   - Spirit：仅在明确指圣灵时大写（如 "the Holy Spirit"、"the Spirit of God"）；泛指人的灵性时不大写
+   - 神学概念：Trinity、Resurrection、Ascension、Gospel、Cross、Heaven（指神居所时）、Kingdom（指神的国度时）、Church（指普世教会整体时）、Scripture、Bible、Word（指圣经或约翰福音"道成肉身"时）
+
+【绝对不改的情况】
+- 全大写单词（AMEN、HALLELUJAH、PRAISE、LORD 等）：口语强调写法，保持原样。
+- 任何无法100%确认指代对象的代词：不改。
+- 圣经版本引用中的任何词：不改。
 - 介词搭配：不修改。`,
     punctuation: `仅纠正明显的标点错误（如句末缺少标点、引号不配对）。
 注意以下情况【不需要修改】：
@@ -1620,8 +1634,6 @@ export default function App() {
         <ImageLibrary
           matchMap={matchMap}
           onImagesLoaded={setLibraryImages}
-          auditResults={auditResults}
-          fileByName={fileByName}
         />
       )}
       {/* Top Navigation Bar */}
