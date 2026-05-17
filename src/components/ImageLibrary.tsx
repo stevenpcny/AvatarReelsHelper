@@ -12,6 +12,7 @@ interface Props {
   matchMap: MatchMap;
   onImagesLoaded: (imgs: LoadedImage[]) => void;
   onCopywritingLoaded?: (text: string) => void;
+  onFolderName?: (name: string) => void;
 }
 
 type ImgSize = 'sm' | 'md' | 'lg';
@@ -21,7 +22,7 @@ const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string
   lg: { cols: 'grid-cols-1', height: 'h-[400px]', label: 'L' },
 };
 
-export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: Props) {
+export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [needsPermission, setNeedsPermission] = useState(false);
@@ -51,6 +52,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
           if (cancelled) { revokeImageUrls(imgs); return; }
           setImages(imgs);
           onImagesLoaded(imgs);
+          onFolderName?.(handle.name);
         } catch (e: any) {
           // Handle stale/moved folder — clear persisted handle and ask user to re-select
           if (e?.name === 'NotFoundError' || e?.message?.includes('could not be found')) {
@@ -102,6 +104,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
       setImages(imgs);
       setNeedsPermission(false);
       onImagesLoaded(imgs);
+      onFolderName?.(handle.name);
       await readCopywritingFromDir(handle);
     } catch (e: any) {
       if (e?.name !== 'AbortError') setError(e?.message ?? '选择目录失败');
@@ -118,6 +121,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
         setImages(imgs);
         setNeedsPermission(false);
         onImagesLoaded(imgs);
+        onFolderName?.(handleRef.current!.name);
       } catch (e: any) {
         setError(e?.message ?? '读取目录失败');
       }

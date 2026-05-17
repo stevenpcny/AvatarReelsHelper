@@ -276,6 +276,7 @@ export default function App() {
   const [matchMap, setMatchMap] = useState<MatchMap>({});
   const [matchMapLoaded, setMatchMapLoaded] = useState(false);
   const [libraryImages, setLibraryImages] = useState<LoadedImage[]>([]);
+  const [libraryFolderName, setLibraryFolderName] = useState<string>('');
   const fileByName = useMemo(() => {
     const m: Record<string, LoadedImage> = {};
     for (const img of libraryImages) m[img.name] = img;
@@ -1357,7 +1358,8 @@ export default function App() {
       }
 
       const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-      triggerDownload(URL.createObjectURL(blob), `bundle_${ts}.zip`);
+      const zipName = libraryFolderName ? `已排版-${libraryFolderName}.zip` : `bundle_${ts}.zip`;
+      triggerDownload(URL.createObjectURL(blob), zipName);
     } finally {
       setIsBundling(false);
     }
@@ -2775,6 +2777,7 @@ export default function App() {
           matchMap={matchMap}
           onImagesLoaded={setLibraryImages}
           onCopywritingLoaded={setCopywriting}
+          onFolderName={setLibraryFolderName}
         />
       </div>
 
