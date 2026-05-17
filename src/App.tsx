@@ -1326,11 +1326,11 @@ export default function App() {
 
       // 1. copy file
       if (format === 'tsv') {
-        const content = auditResults.map(r => [`#${r.id}#`, r.correctedEnglish].join('\t')).join('\n');
+        const content = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
         zip.file('copy.tsv', content);
       } else {
         const content = JSON.stringify(
-          auditResults.map(r => ({ id: `#${r.id}#`, english: r.correctedEnglish })),
+          auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
           null, 2
         );
         zip.file('copy.json', content);
