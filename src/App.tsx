@@ -1316,34 +1316,48 @@ export default function App() {
     if (auditResults.length === 0) return;
     const ts = new Date().getTime();
 
+    // build download queue
+    const queue: { url: string; filename: string; revokeAfter?: boolean }[] = [];
+
     // 1. copy file
     let copyContent = '';
-    let copyMime = '';
-    let copyName = '';
     if (format === 'tsv') {
       copyContent = auditResults.map(r => [r.id, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
-      copyMime = 'text/tab-separated-values';
-      copyName = `copy_${ts}.tsv`;
+      const blob = new Blob([copyContent], { type: 'text/tab-separated-values' });
+      queue.push({ url: URL.createObjectURL(blob), filename: `copy_${ts}.tsv`, revokeAfter: true });
     } else {
       copyContent = JSON.stringify(
         auditResults.map(r => ({ id: r.id, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
         null, 2
       );
-      copyMime = 'application/json';
-      copyName = `copy_${ts}.json`;
+      const blob = new Blob([copyContent], { type: 'application/json' });
+      queue.push({ url: URL.createObjectURL(blob), filename: `copy_${ts}.json`, revokeAfter: true });
     }
-    const copyBlob = new Blob([copyContent], { type: copyMime });
-    const copyUrl = URL.createObjectURL(copyBlob);
-    triggerDownload(copyUrl, copyName);
-    setTimeout(() => URL.revokeObjectURL(copyUrl), 5000);
 
-    // 2. matched images
+    // 2. matched images — renamed
+    const matchedNames = new Set<string>();
     auditResults.forEach(r => {
       const img = fileByName[matchMap[r.id]];
       if (!img) return;
+      matchedNames.add(img.name);
       const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
       const label = sanitizeFilename(normalizeChinese(r.chinese));
-      triggerDownload(img.url, `${r.id}_${label}.${ext}`);
+      queue.push({ url: img.url, filename: `${r.id}_${label}.${ext}` });
+    });
+
+    // 3. unmatched images — original filename
+    libraryImages.forEach(img => {
+      if (!matchedNames.has(img.name)) {
+        queue.push({ url: img.url, filename: img.name });
+      }
+    });
+
+    // trigger sequentially with delay so browser doesn't block
+    queue.forEach(({ url, filename, revokeAfter }, i) => {
+      setTimeout(() => {
+        triggerDownload(url, filename);
+        if (revokeAfter) setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }, i * 300);
     });
   };
 
