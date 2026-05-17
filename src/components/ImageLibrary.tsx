@@ -140,16 +140,16 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
     return (
       <button
         onClick={() => setCollapsed(false)}
-        className="fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-white border border-r-0 border-neutral-200 rounded-l-xl px-2 py-4 shadow-md hover:bg-neutral-50"
+        className="w-6 bg-white border-l border-neutral-200 flex items-center justify-center shrink-0 hover:bg-blue-50 hover:text-blue-600 transition-colors self-stretch"
         title="展开图片库"
       >
-        <ChevronLeft className="w-4 h-4 text-neutral-500" />
+        <ChevronLeft className="w-3.5 h-3.5 text-neutral-400" />
       </button>
     );
   }
 
   return (
-    <aside className="fixed right-0 top-0 bottom-0 w-[300px] z-40 bg-white border-l border-neutral-200 shadow-lg flex flex-col">
+    <aside className="w-[300px] shrink-0 bg-white border-l border-neutral-200 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-blue-500" />

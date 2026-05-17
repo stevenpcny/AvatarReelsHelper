@@ -1629,11 +1629,6 @@ export default function App() {
       onDrop={handleDrop}
       className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
     >
-      <ImageLibrary
-        matchMap={matchMap}
-        onImagesLoaded={setLibraryImages}
-        onCopywritingLoaded={setCopywriting}
-      />
       {/* Top Navigation Bar */}
       <header className="h-11 bg-white border-b border-neutral-200 flex items-center px-4 z-40 shrink-0 gap-3">
         <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
@@ -2758,6 +2753,11 @@ export default function App() {
             </>
           )}
         </main>
+        <ImageLibrary
+          matchMap={matchMap}
+          onImagesLoaded={setLibraryImages}
+          onCopywritingLoaded={setCopywriting}
+        />
       </div>
 
       {/* Skill Modal */}
