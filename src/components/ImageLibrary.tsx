@@ -52,7 +52,15 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
           setImages(imgs);
           onImagesLoaded(imgs);
         } catch (e: any) {
-          setError(e?.message ?? '读取目录失败');
+          // Handle stale/moved folder — clear persisted handle and ask user to re-select
+          if (e?.name === 'NotFoundError' || e?.message?.includes('could not be found')) {
+            handleRef.current = null;
+            await clearDirHandle();
+            setNeedsPermission(false);
+            setError('上次的文件夹已移动或删除，请重新选择。');
+          } else {
+            setError(e?.message ?? '读取目录失败');
+          }
         }
       } else {
         setNeedsPermission(true);
