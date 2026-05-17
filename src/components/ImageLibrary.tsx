@@ -16,9 +16,9 @@ interface Props {
 
 type ImgSize = 'sm' | 'md' | 'lg';
 const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string }> = {
-  sm: { cols: 'grid-cols-3', height: 'h-[80px]',  label: 'S' },
-  md: { cols: 'grid-cols-2', height: 'h-[140px]', label: 'M' },
-  lg: { cols: 'grid-cols-1', height: 'h-[220px]', label: 'L' },
+  sm: { cols: 'grid-cols-2', height: 'h-[160px]', label: 'S' },
+  md: { cols: 'grid-cols-1', height: 'h-[260px]', label: 'M' },
+  lg: { cols: 'grid-cols-1', height: 'h-[400px]', label: 'L' },
 };
 
 export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: Props) {
@@ -254,7 +254,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
                 src={img.url}
                 alt={img.name}
                 draggable={false}
-                className={`w-full ${SIZE_CONFIG[imgSize].height} object-cover pointer-events-none`}
+                className={`w-full ${SIZE_CONFIG[imgSize].height} object-contain bg-neutral-100 pointer-events-none`}
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1">
                 <div className="text-[9px] font-bold text-white truncate">{img.name}</div>
