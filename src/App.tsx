@@ -1645,7 +1645,7 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
+      className="h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col overflow-hidden"
     >
       {/* Top Navigation Bar */}
       <header className="h-11 bg-white border-b border-neutral-200 flex items-center px-4 z-40 shrink-0 gap-3">
