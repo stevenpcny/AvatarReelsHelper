@@ -1336,7 +1336,7 @@ export default function App() {
       }
 
       // 2. matched images — renamed
-      const matched = zip.folder('matched')!;
+      const images = zip.folder('images')!;
       const matchedNames = new Set<string>();
       for (const r of auditResults) {
         const img = fileByName[matchMap[r.id]];
@@ -1345,15 +1345,14 @@ export default function App() {
         const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
         const label = sanitizeFilename(normalizeChinese(r.chinese));
         const buf = await fetch(img.url).then(res => res.arrayBuffer());
-        matched.file(`${r.id}_${label}.${ext}`, buf);
+        images.file(`${r.id}_${label}.${ext}`, buf);
       }
 
       // 3. unmatched images — original filename
-      const unmatched = zip.folder('unmatched')!;
       for (const img of libraryImages) {
         if (!matchedNames.has(img.name)) {
           const buf = await fetch(img.url).then(res => res.arrayBuffer());
-          unmatched.file(img.name, buf);
+          images.file(img.name, buf);
         }
       }
 
