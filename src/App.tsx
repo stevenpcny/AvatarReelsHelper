@@ -282,7 +282,6 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const backupInputRef = useRef<HTMLInputElement>(null);
 
   // Check for API key on mount
   useEffect(() => {
@@ -1291,63 +1290,62 @@ export default function App() {
     );
   };
 
-  const exportAuditResults = (format: 'tsv' | 'json') => {
-    if (auditResults.length === 0) return;
-    
-    let content = '';
-    let fileName = `audit_results_${new Date().getTime()}`;
-    let mimeType = '';
-    
-    if (format === 'tsv') {
-      const headers = ['ID', '中文原文', '原始英文', '修正后英文'];
-      const rows = auditResults.map(r => [r.id, r.chinese, r.originalEnglish, r.correctedEnglish].join('\t'));
-      content = [headers.join('\t'), ...rows].join('\n');
-      fileName += '.tsv';
-      mimeType = 'text/tab-separated-values';
-    } else {
-      content = JSON.stringify({
-        copywriting,
-        auditResults,
-        copiedAuditTextKeys: Array.from(copiedAuditTextKeys),
-        timestamp: new Date().toISOString()
-      }, null, 2);
-      fileName += '.json';
-      mimeType = 'application/json';
-    }
-    
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
+  const normalizeChinese = (text: string) => text.replace(/\s*\n\s*/g, ' ').trim();
+
+  // Safe on both Windows (forbids \ / : * ? " < > |) and macOS (forbids / and null)
+  const sanitizeFilename = (text: string, maxChars = 50): string =>
+    text
+      .slice(0, maxChars)
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/[\x00-\x1f\x7f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[. ]+$/, '');
+
+  const triggerDownload = (url: string, filename: string) => {
     const link = document.createElement('a');
     link.href = url;
-    link.download = fileName;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
-  const importBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = JSON.parse(event.target?.result as string);
-        if (data.copywriting !== undefined) setCopywriting(data.copywriting);
-        if (data.auditResults !== undefined) setAuditResults(data.auditResults);
-        if (data.copiedAuditTextKeys !== undefined) setCopiedAuditTextKeys(new Set(data.copiedAuditTextKeys));
-        else setCopiedAuditTextKeys(new Set());
-        alert('备份恢复成功！');
-      } catch (err) {
-        console.error('Failed to parse backup file', err);
-        alert('备份文件格式错误，恢复失败。');
-      }
-    };
-    reader.readAsText(file);
-    // Reset input
-    e.target.value = '';
+  const bundleDownload = (format: 'tsv' | 'json') => {
+    if (auditResults.length === 0) return;
+    const ts = new Date().getTime();
+
+    // 1. copy file
+    let copyContent = '';
+    let copyMime = '';
+    let copyName = '';
+    if (format === 'tsv') {
+      copyContent = auditResults.map(r => [r.id, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
+      copyMime = 'text/tab-separated-values';
+      copyName = `copy_${ts}.tsv`;
+    } else {
+      copyContent = JSON.stringify(
+        auditResults.map(r => ({ id: r.id, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
+        null, 2
+      );
+      copyMime = 'application/json';
+      copyName = `copy_${ts}.json`;
+    }
+    const copyBlob = new Blob([copyContent], { type: copyMime });
+    const copyUrl = URL.createObjectURL(copyBlob);
+    triggerDownload(copyUrl, copyName);
+    setTimeout(() => URL.revokeObjectURL(copyUrl), 5000);
+
+    // 2. matched images
+    auditResults.forEach(r => {
+      const img = fileByName[matchMap[r.id]];
+      if (!img) return;
+      const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
+      const label = sanitizeFilename(normalizeChinese(r.chinese));
+      triggerDownload(img.url, `${r.id}_${label}.${ext}`);
+    });
   };
+
   const toggleAuditOption = (id: string) => {
     const next = new Set(selectedAuditOptions);
     if (next.has(id)) next.delete(id);
@@ -1630,12 +1628,11 @@ export default function App() {
       onDrop={handleDrop}
       className="min-h-screen bg-neutral-50 text-neutral-900 font-sans selection:bg-blue-100 flex flex-col"
     >
-      {auditResults.length > 0 && (
-        <ImageLibrary
-          matchMap={matchMap}
-          onImagesLoaded={setLibraryImages}
-        />
-      )}
+      <ImageLibrary
+        matchMap={matchMap}
+        onImagesLoaded={setLibraryImages}
+        onCopywritingLoaded={setCopywriting}
+      />
       {/* Top Navigation Bar */}
       <header className="h-11 bg-white border-b border-neutral-200 flex items-center px-4 z-40 shrink-0 gap-3">
         <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
@@ -2257,61 +2254,18 @@ export default function App() {
                           </button>
                         )}
                         <button
-                          onClick={() => exportAuditResults('tsv')}
+                          onClick={() => bundleDownload('tsv')}
                           className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          导出 Excel (TSV)
+                          打包下载 (TSV)
                         </button>
                         <button
-                          onClick={() => exportAuditResults('json')}
+                          onClick={() => bundleDownload('json')}
                           className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
                         >
-                          <Save className="w-3.5 h-3.5" />
-                          备份 JSON
-                        </button>
-                        <button
-                          onClick={() => backupInputRef.current?.click()}
-                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          恢复备份
-                        </button>
-                        <input
-                          type="file"
-                          ref={backupInputRef}
-                          onChange={importBackup}
-                          accept=".json"
-                          className="hidden"
-                        />
-                        <button
-                          onClick={() => {
-                            if (window.confirm('确定要清空所有质检结果吗？')) {
-                              setAuditResults([]);
-                              setCopiedAuditTextKeys(new Set());
-                            }
-                          }}
-                          className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1.5"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          清空结果
-                        </button>
-                        <button
-                          onClick={() => {
-                            const tsv = auditResults.map(r => `${r.id}\t${r.chinese}\t${r.correctedEnglish}`).join('\n');
-                            copyToClipboard(tsv);
-                          }}
-                          className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1.5"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          拷贝全部 (Sheets 格式)
-                        </button>
-                        <button
-                          onClick={() => setCopywriting(auditResults.map(r => `${r.id} ${r.chinese} ${r.correctedEnglish}`).join('\n'))}
-                          className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1.5"
-                        >
-                          <RefreshCcw className="w-3.5 h-3.5" />
-                          同步到文案库
+                          <Download className="w-3.5 h-3.5" />
+                          打包下载 (JSON)
                         </button>
                       </div>
                     </div>
@@ -2350,6 +2304,7 @@ export default function App() {
                               </div>
                               <AuditImageSlot
                                 copyId={res.id}
+                                chineseText={res.chinese}
                                 matchedImg={matchedImg}
                                 matchedName={matchedName}
                                 isSelected={isAuditSelected}
@@ -3018,6 +2973,7 @@ export default function App() {
 // ── Audit row image slot ─────────────────────────────────────────────────────
 interface AuditImageSlotProps {
   copyId: string;
+  chineseText: string;
   matchedImg?: LoadedImage;
   matchedName?: string;
   isSelected: boolean;
@@ -3028,8 +2984,11 @@ interface AuditImageSlotProps {
 }
 
 function AuditImageSlot({
-  matchedImg, matchedName, onDropImage, onClear, onDragStartFiles,
+  copyId, chineseText, matchedImg, matchedName, onDropImage, onClear, onDragStartFiles,
 }: AuditImageSlotProps) {
+  const sanitize = (text: string, max = 50) =>
+    text.slice(0, max).replace(/[\\/:*?"<>|]/g, '').replace(/[\x00-\x1f\x7f]/g, '')
+      .replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
   const [over, setOver] = useState(false);
 
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -3086,11 +3045,27 @@ function AuditImageSlot({
           />
           <button
             onClick={(e) => { e.stopPropagation(); onClear(); }}
-            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow opacity-0 hover:opacity-100 group-hover:opacity-100"
-            style={{ opacity: 1 }}
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow"
             title="清除匹配"
           >
             ×
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const ext = matchedImg!.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
+              const label = sanitize(chineseText.replace(/\s*\n\s*/g, ' ').trim());
+              const link = document.createElement('a');
+              link.href = matchedImg!.url;
+              link.download = `${copyId}_${label}.${ext}`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }}
+            className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-blue-500 text-white flex items-center justify-center shadow"
+            title="下载此图片"
+          >
+            <Download className="w-2.5 h-2.5" />
           </button>
         </>
       ) : (

@@ -11,9 +11,10 @@ import {
 interface Props {
   matchMap: MatchMap;
   onImagesLoaded: (imgs: LoadedImage[]) => void;
+  onCopywritingLoaded?: (text: string) => void;
 }
 
-export function ImageLibrary({ matchMap, onImagesLoaded }: Props) {
+export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [needsPermission, setNeedsPermission] = useState(false);
@@ -57,6 +58,18 @@ export function ImageLibrary({ matchMap, onImagesLoaded }: Props) {
   // Revoke object URLs on unmount
   useEffect(() => () => revokeImageUrls(images), [images]);
 
+  const readCopywritingFromDir = async (handle: any) => {
+    if (!onCopywritingLoaded) return;
+    for await (const [, entry] of handle.entries()) {
+      if (entry.kind === 'file' && /\.(txt|tsv)$/i.test(entry.name)) {
+        const file = await entry.getFile();
+        const text = await file.text();
+        onCopywritingLoaded(text);
+        return;
+      }
+    }
+  };
+
   const pickFolder = async () => {
     setError(null);
     try {
@@ -73,6 +86,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded }: Props) {
       setImages(imgs);
       setNeedsPermission(false);
       onImagesLoaded(imgs);
+      await readCopywritingFromDir(handle);
     } catch (e: any) {
       if (e?.name !== 'AbortError') setError(e?.message ?? '选择目录失败');
     }
