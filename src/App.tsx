@@ -18,6 +18,7 @@ import {
   loadMatchMap, saveMatchMap, INTERNAL_IMAGE_MIME,
   type MatchMap, type LoadedImage,
 } from './utils/imageMatch';
+import JSZip from 'jszip';
 
 interface ImageItem {
   id: string;
@@ -1312,53 +1313,55 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const bundleDownload = (format: 'tsv' | 'json') => {
-    if (auditResults.length === 0) return;
-    const ts = new Date().getTime();
+  const [isBundling, setIsBundling] = useState(false);
 
-    // build download queue
-    const queue: { url: string; filename: string; revokeAfter?: boolean }[] = [];
+  const bundleDownload = async (format: 'tsv' | 'json') => {
+    if (auditResults.length === 0 || isBundling) return;
+    setIsBundling(true);
 
-    // 1. copy file
-    let copyContent = '';
-    if (format === 'tsv') {
-      copyContent = auditResults.map(r => [r.id, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
-      const blob = new Blob([copyContent], { type: 'text/tab-separated-values' });
-      queue.push({ url: URL.createObjectURL(blob), filename: `copy_${ts}.tsv`, revokeAfter: true });
-    } else {
-      copyContent = JSON.stringify(
-        auditResults.map(r => ({ id: r.id, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
-        null, 2
-      );
-      const blob = new Blob([copyContent], { type: 'application/json' });
-      queue.push({ url: URL.createObjectURL(blob), filename: `copy_${ts}.json`, revokeAfter: true });
-    }
+    try {
+      const zip = new JSZip();
+      const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '');
 
-    // 2. matched images — renamed
-    const matchedNames = new Set<string>();
-    auditResults.forEach(r => {
-      const img = fileByName[matchMap[r.id]];
-      if (!img) return;
-      matchedNames.add(img.name);
-      const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
-      const label = sanitizeFilename(normalizeChinese(r.chinese));
-      queue.push({ url: img.url, filename: `${r.id}_${label}.${ext}` });
-    });
-
-    // 3. unmatched images — original filename
-    libraryImages.forEach(img => {
-      if (!matchedNames.has(img.name)) {
-        queue.push({ url: img.url, filename: img.name });
+      // 1. copy file
+      if (format === 'tsv') {
+        const content = auditResults.map(r => [r.id, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
+        zip.file('copy.tsv', content);
+      } else {
+        const content = JSON.stringify(
+          auditResults.map(r => ({ id: r.id, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
+          null, 2
+        );
+        zip.file('copy.json', content);
       }
-    });
 
-    // trigger sequentially with delay so browser doesn't block
-    queue.forEach(({ url, filename, revokeAfter }, i) => {
-      setTimeout(() => {
-        triggerDownload(url, filename);
-        if (revokeAfter) setTimeout(() => URL.revokeObjectURL(url), 5000);
-      }, i * 300);
-    });
+      // 2. matched images — renamed
+      const matched = zip.folder('matched')!;
+      const matchedNames = new Set<string>();
+      for (const r of auditResults) {
+        const img = fileByName[matchMap[r.id]];
+        if (!img) continue;
+        matchedNames.add(img.name);
+        const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
+        const label = sanitizeFilename(normalizeChinese(r.chinese));
+        const buf = await fetch(img.url).then(res => res.arrayBuffer());
+        matched.file(`${r.id}_${label}.${ext}`, buf);
+      }
+
+      // 3. unmatched images — original filename
+      const unmatched = zip.folder('unmatched')!;
+      for (const img of libraryImages) {
+        if (!matchedNames.has(img.name)) {
+          const buf = await fetch(img.url).then(res => res.arrayBuffer());
+          unmatched.file(img.name, buf);
+        }
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      triggerDownload(URL.createObjectURL(blob), `bundle_${ts}.zip`);
+    } finally {
+      setIsBundling(false);
+    }
   };
 
   const toggleAuditOption = (id: string) => {
@@ -2276,17 +2279,19 @@ export default function App() {
                         )}
                         <button
                           onClick={() => bundleDownload('tsv')}
-                          className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5"
+                          disabled={isBundling}
+                          className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          打包下载 (TSV)
+                          {isBundling ? '打包中…' : '打包下载 (TSV)'}
                         </button>
                         <button
                           onClick={() => bundleDownload('json')}
-                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5"
+                          disabled={isBundling}
+                          className="text-xs font-bold text-neutral-500 hover:underline flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          打包下载 (JSON)
+                          {isBundling ? '打包中…' : '打包下载 (JSON)'}
                         </button>
                       </div>
                     </div>
