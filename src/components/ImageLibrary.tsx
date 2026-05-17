@@ -14,11 +14,19 @@ interface Props {
   onCopywritingLoaded?: (text: string) => void;
 }
 
+type ImgSize = 'sm' | 'md' | 'lg';
+const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string }> = {
+  sm: { cols: 'grid-cols-3', height: 'h-[80px]',  label: 'S' },
+  md: { cols: 'grid-cols-2', height: 'h-[140px]', label: 'M' },
+  lg: { cols: 'grid-cols-1', height: 'h-[220px]', label: 'L' },
+};
+
 export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [needsPermission, setNeedsPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imgSize, setImgSize] = useState<ImgSize>('md');
   const handleRef = useRef<any>(null);
 
   const refCount = useMemo(() => {
@@ -150,13 +158,27 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
             <span className="text-[10px] text-neutral-400 font-medium">{images.length} 张</span>
           )}
         </div>
-        <button
-          onClick={() => setCollapsed(true)}
-          className="p-1 hover:bg-neutral-100 rounded text-neutral-400"
-          title="收起"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <div className="flex rounded-md border border-neutral-200 overflow-hidden">
+            {(['sm', 'md', 'lg'] as ImgSize[]).map(s => (
+              <button
+                key={s}
+                onClick={() => setImgSize(s)}
+                className={`w-6 h-6 text-[10px] font-bold transition-colors ${imgSize === s ? 'bg-blue-600 text-white' : 'bg-white text-neutral-400 hover:bg-neutral-50'}`}
+                title={{ sm: '小', md: '中', lg: '大' }[s]}
+              >
+                {SIZE_CONFIG[s].label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setCollapsed(true)}
+            className="p-1 hover:bg-neutral-100 rounded text-neutral-400"
+            title="收起"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="px-4 py-2 border-b border-neutral-100 flex flex-wrap gap-2">
@@ -215,7 +237,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
             选择本地图片文件夹后，从这里把图片拖到左侧文案上完成匹配。
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2">
+        <div className={`grid ${SIZE_CONFIG[imgSize].cols} gap-2`}>
           {images.map((img) => (
             <div
               key={img.name}
@@ -232,7 +254,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded }: 
                 src={img.url}
                 alt={img.name}
                 draggable={false}
-                className="w-full h-[120px] object-cover pointer-events-none"
+                className={`w-full ${SIZE_CONFIG[imgSize].height} object-cover pointer-events-none`}
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1">
                 <div className="text-[9px] font-bold text-white truncate">{img.name}</div>

@@ -270,6 +270,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAuditIds, setSelectedAuditIds] = useState<Set<string>>(new Set());
+  const [cardDragOver, setCardDragOver] = useState<string | null>(null);
   const [copiedAuditTextKeys, setCopiedAuditTextKeys] = useState<Set<string>>(new Set());
   const [matchMap, setMatchMap] = useState<MatchMap>({});
   const [matchMapLoaded, setMatchMapLoaded] = useState(false);
@@ -1681,12 +1682,22 @@ export default function App() {
 
         {/* Left Sidebar: Skills & Queue */}
         {activeModule !== 'audit' && (
+          <>
+          {isSidebarCollapsed && (
+            <button
+              onClick={() => setIsSidebarCollapsed(false)}
+              className="w-6 bg-white border-r border-y border-neutral-200 rounded-r-lg flex items-center justify-center shrink-0 z-20 hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-sm self-stretch"
+              title="展开侧边栏"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
           <aside className={`${isSidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-80 opacity-100'} border-r border-neutral-200 bg-white flex flex-col shrink-0 z-20 transition-all duration-300 relative`}>
             {/* Collapse Button */}
-            <button 
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className={`absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white border border-neutral-200 rounded-full flex items-center justify-center shadow-md z-30 hover:text-blue-600 transition-all ${isSidebarCollapsed ? 'rotate-180 -right-10' : ''}`}
-              title={isSidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
+            <button
+              onClick={() => setIsSidebarCollapsed(true)}
+              className="absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white border border-neutral-200 rounded-full flex items-center justify-center shadow-md z-30 hover:text-blue-600 transition-all"
+              title="折叠侧边栏"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -1980,6 +1991,7 @@ export default function App() {
               )}
             </div>
           </aside>
+          </>
         )}
 
         {/* Main Content Area */}
@@ -2275,6 +2287,14 @@ export default function App() {
                         const isAuditSelected = selectedAuditIds.has(res.id);
                         const matchedName = matchMap[res.id];
                         const matchedImg = matchedName ? fileByName[matchedName] : undefined;
+                        const handleCardDrop = (e: React.DragEvent) => {
+                          const name = e.dataTransfer.getData(INTERNAL_IMAGE_MIME);
+                          if (!name) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMatchMap(prev => ({ ...prev, [res.id]: name }));
+                          setCardDragOver(null);
+                        };
                         return (
                         <div
                           key={res.id}
@@ -2285,9 +2305,23 @@ export default function App() {
                               return next;
                             });
                           }}
+                          onDragOver={(e) => {
+                            if (e.dataTransfer.types.includes(INTERNAL_IMAGE_MIME)) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setCardDragOver(res.id);
+                            }
+                          }}
+                          onDragLeave={(e) => {
+                            if (!e.currentTarget.contains(e.relatedTarget as Node))
+                              setCardDragOver(null);
+                          }}
+                          onDrop={handleCardDrop}
                           className={`apple-card overflow-hidden flex flex-col transition-all cursor-pointer select-none
                             ${isAuditSelected
                               ? 'ring-2 ring-blue-500 shadow-md shadow-blue-100'
+                              : cardDragOver === res.id
+                              ? 'ring-2 ring-purple-400 shadow-md shadow-purple-100 scale-[1.01]'
                               : 'hover:shadow-sm'}`}
                         >
                           <div className="px-4 py-2 bg-neutral-50/50 border-b border-neutral-100 flex items-center justify-between">
