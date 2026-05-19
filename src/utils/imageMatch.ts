@@ -89,6 +89,7 @@ export async function loadImagesFromDir(handle: any): Promise<LoadedImage[]> {
   const out: LoadedImage[] = [];
   for await (const entry of handle.values()) {
     if (entry.kind !== 'file') continue;
+    if (entry.name.startsWith('._') || entry.name.startsWith('.')) continue;
     if (!IMAGE_EXT.test(entry.name)) continue;
     const file: File = await entry.getFile();
     out.push({ name: entry.name, file, url: URL.createObjectURL(file) });
