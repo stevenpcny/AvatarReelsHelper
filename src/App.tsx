@@ -277,6 +277,7 @@ export default function App() {
   const [matchMapLoaded, setMatchMapLoaded] = useState(false);
   const [libraryImages, setLibraryImages] = useState<LoadedImage[]>([]);
   const [libraryFolderName, setLibraryFolderName] = useState<string>('');
+  const [voiceId, setVoiceId] = useState<string>('');
   const fileByName = useMemo(() => {
     const m: Record<string, LoadedImage> = {};
     for (const img of libraryImages) m[img.name] = img;
@@ -1326,11 +1327,17 @@ export default function App() {
 
       // 1. copy file
       if (format === 'tsv') {
-        const content = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), r.correctedEnglish].join('\t')).join('\n');
+        const header = `voice_id\t${voiceId}`;
+        const colNames = `#id#\tchinese\tenglish`;
+        const rows = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), r.correctedEnglish].join('\t'));
+        const content = [header, colNames, ...rows].join('\n');
         zip.file('copy.tsv', content);
       } else {
         const content = JSON.stringify(
-          auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
+          {
+            voice_id: voiceId,
+            items: auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
+          },
           null, 2
         );
         zip.file('copy.json', content);
@@ -2778,6 +2785,7 @@ export default function App() {
           onImagesLoaded={setLibraryImages}
           onCopywritingLoaded={setCopywriting}
           onFolderName={setLibraryFolderName}
+          onVoiceId={setVoiceId}
         />
       </div>
 

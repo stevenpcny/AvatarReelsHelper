@@ -13,6 +13,7 @@ interface Props {
   onImagesLoaded: (imgs: LoadedImage[]) => void;
   onCopywritingLoaded?: (text: string) => void;
   onFolderName?: (name: string) => void;
+  onVoiceId?: (id: string) => void;
 }
 
 type ImgSize = 'sm' | 'md' | 'lg';
@@ -22,9 +23,10 @@ const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string
   lg: { cols: 'grid-cols-1', height: 'h-[400px]', label: 'L' },
 };
 
-export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName }: Props) {
+export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName, onVoiceId }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
+  const [voiceId, setVoiceId] = useState('');
   const [needsPermission, setNeedsPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgSize, setImgSize] = useState<ImgSize>('md');
@@ -37,6 +39,28 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
     }
     return counts;
   }, [matchMap]);
+
+  // imageName → sorted list of matched copywriting IDs
+  const imageIds = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const [id, filename] of Object.entries(matchMap)) {
+      if (!map[filename]) map[filename] = [];
+      map[filename].push(id);
+    }
+    for (const ids of Object.values(map)) {
+      ids.sort((a, b) => Number(a) - Number(b));
+    }
+    return map;
+  }, [matchMap]);
+
+  // unmatched first, then matched sorted by min numeric ID
+  const sortedImages = useMemo(() => {
+    const unmatched = images.filter(img => !imageIds[img.name]);
+    const matched = images
+      .filter(img => imageIds[img.name])
+      .sort((a, b) => Number(imageIds[a.name][0]) - Number(imageIds[b.name][0]));
+    return [...unmatched, ...matched];
+  }, [images, imageIds]);
 
   // Load persisted dir handle on mount; if permission already granted, auto-load images.
   useEffect(() => {
@@ -222,6 +246,20 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
         )}
       </div>
 
+      <div className="px-4 py-2 border-b border-neutral-100 flex items-center gap-2">
+        <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-tight shrink-0">Voice ID:</span>
+        <input
+          type="text"
+          value={voiceId}
+          onChange={(e) => {
+            setVoiceId(e.target.value);
+            onVoiceId?.(e.target.value);
+          }}
+          placeholder="输入 Voice ID"
+          className="flex-1 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
+        />
+      </div>
+
       {needsPermission && (
         <div className="m-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 space-y-2">
           <div className="flex items-center gap-1.5 font-bold">
@@ -250,7 +288,9 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
           </div>
         )}
         <div className={`grid ${SIZE_CONFIG[imgSize].cols} gap-2`}>
-          {images.map((img) => (
+          {sortedImages.map((img) => {
+            const ids = imageIds[img.name];
+            return (
             <div
               key={img.name}
               draggable
@@ -271,13 +311,18 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1">
                 <div className="text-[9px] font-bold text-white truncate">{img.name}</div>
               </div>
-              {refCount[img.name] > 0 && (
-                <div className="absolute top-1 right-1 bg-blue-600 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 shadow">
-                  ×{refCount[img.name]}
+              {ids ? (
+                <div className="absolute top-1 left-1 flex flex-wrap gap-0.5">
+                  {ids.map(id => (
+                    <span key={id} className="bg-blue-600 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 shadow leading-none">
+                      #{id}#
+                    </span>
+                  ))}
                 </div>
-              )}
+              ) : null}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </aside>
