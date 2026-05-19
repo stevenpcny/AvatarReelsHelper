@@ -239,6 +239,7 @@ export default function App() {
 - 圣经版本引用中的任何词：不改。
 - 介词搭配：不修改。`,
     punctuation: `仅纠正明显的标点错误（如句末缺少标点、引号不配对）。
+如果一个完整句子（含主谓结构或完整语义）紧接着下一个句子但缺少句末标点，必须补上句号。
 注意以下情况【不需要修改】：
 - 圣经经文引用：不修改引用自圣经版本的标点，各版本有各自的标点规范。
 - 连续感叹号（如 !!!）或连续问号（如 ???）：口语情感强调，保持原样。
@@ -278,6 +279,7 @@ export default function App() {
   const [libraryImages, setLibraryImages] = useState<LoadedImage[]>([]);
   const [libraryFolderName, setLibraryFolderName] = useState<string>('');
   const [voiceId, setVoiceId] = useState<string>('');
+  const [voiceEngine, setVoiceEngine] = useState<string>('auto');
   const fileByName = useMemo(() => {
     const m: Record<string, LoadedImage> = {};
     for (const img of libraryImages) m[img.name] = img;
@@ -1327,7 +1329,7 @@ export default function App() {
 
       // 1. copy file
       if (format === 'tsv') {
-        const header = `voice_id\t${voiceId}`;
+        const header = `voice_id\t${voiceId}\nvoice_engine\t${voiceEngine}`;
         const colNames = `#id#\tchinese\tenglish`;
         const rows = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), r.correctedEnglish].join('\t'));
         const content = [header, colNames, ...rows].join('\n');
@@ -1336,6 +1338,7 @@ export default function App() {
         const content = JSON.stringify(
           {
             voice_id: voiceId,
+            voice_engine: voiceEngine,
             items: auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
           },
           null, 2
@@ -2786,6 +2789,7 @@ export default function App() {
           onCopywritingLoaded={setCopywriting}
           onFolderName={setLibraryFolderName}
           onVoiceId={setVoiceId}
+          onVoiceEngine={setVoiceEngine}
         />
       </div>
 

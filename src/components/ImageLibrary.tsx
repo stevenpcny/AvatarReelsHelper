@@ -8,12 +8,16 @@ import {
   type MatchMap,
 } from '../utils/imageMatch';
 
+const VOICE_ENGINES = ['auto', 'elevenLabs', 'elevenLabsV3', 'panda', 'starfish', 'fish'] as const;
+type VoiceEngine = typeof VOICE_ENGINES[number];
+
 interface Props {
   matchMap: MatchMap;
   onImagesLoaded: (imgs: LoadedImage[]) => void;
   onCopywritingLoaded?: (text: string) => void;
   onFolderName?: (name: string) => void;
   onVoiceId?: (id: string) => void;
+  onVoiceEngine?: (engine: VoiceEngine) => void;
 }
 
 type ImgSize = 'sm' | 'md' | 'lg';
@@ -23,10 +27,11 @@ const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string
   lg: { cols: 'grid-cols-1', height: 'h-[400px]', label: 'L' },
 };
 
-export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName, onVoiceId }: Props) {
+export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName, onVoiceId, onVoiceEngine }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [voiceId, setVoiceId] = useState('');
+  const [voiceEngine, setVoiceEngine] = useState<VoiceEngine>('auto');
   const [needsPermission, setNeedsPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgSize, setImgSize] = useState<ImgSize>('md');
@@ -258,6 +263,20 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
           placeholder="输入 Voice ID"
           className="flex-1 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
         />
+        <select
+          value={voiceEngine}
+          onChange={(e) => {
+            const v = e.target.value as VoiceEngine;
+            setVoiceEngine(v);
+            onVoiceEngine?.(v);
+          }}
+          className="text-[11px] font-medium text-neutral-700 border border-neutral-200 rounded px-2 py-1 focus:border-blue-400 bg-white outline-none"
+          title="Voice Engine"
+        >
+          {VOICE_ENGINES.map(eng => (
+            <option key={eng} value={eng}>{eng}</option>
+          ))}
+        </select>
       </div>
 
       {needsPermission && (
