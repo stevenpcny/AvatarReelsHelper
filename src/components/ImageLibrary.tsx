@@ -18,6 +18,7 @@ interface Props {
   onFolderName?: (name: string) => void;
   onVoiceId?: (id: string) => void;
   onVoiceEngine?: (engine: VoiceEngine) => void;
+  onVoiceSpeed?: (speed: string) => void;
 }
 
 type ImgSize = 'sm' | 'md' | 'lg';
@@ -27,11 +28,12 @@ const SIZE_CONFIG: Record<ImgSize, { cols: string; height: string; label: string
   lg: { cols: 'grid-cols-1', height: 'h-[400px]', label: 'L' },
 };
 
-export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName, onVoiceId, onVoiceEngine }: Props) {
+export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, onFolderName, onVoiceId, onVoiceEngine, onVoiceSpeed }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [images, setImages] = useState<LoadedImage[]>([]);
   const [voiceId, setVoiceId] = useState('');
   const [voiceEngine, setVoiceEngine] = useState<VoiceEngine>('auto');
+  const [voiceSpeed, setVoiceSpeed] = useState('1.0');
   const [needsPermission, setNeedsPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgSize, setImgSize] = useState<ImgSize>('md');
@@ -277,6 +279,18 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
             <option key={eng} value={eng}>{eng}</option>
           ))}
         </select>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={voiceSpeed}
+          onChange={(e) => {
+            setVoiceSpeed(e.target.value);
+            onVoiceSpeed?.(e.target.value);
+          }}
+          placeholder="语速"
+          title="Voice Speed"
+          className="w-14 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
+        />
       </div>
 
       {needsPermission && (

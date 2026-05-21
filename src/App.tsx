@@ -287,6 +287,7 @@ export default function App() {
   const [libraryFolderName, setLibraryFolderName] = useState<string>('');
   const [voiceId, setVoiceId] = useState<string>('');
   const [voiceEngine, setVoiceEngine] = useState<string>('auto');
+  const [voiceSpeed, setVoiceSpeed] = useState<string>('1.0');
   const fileByName = useMemo(() => {
     const m: Record<string, LoadedImage> = {};
     for (const img of libraryImages) m[img.name] = img;
@@ -1337,7 +1338,7 @@ export default function App() {
 
       // 1. copy file
       if (format === 'tsv') {
-        const header = `voice_id\t${voiceId}\nvoice_engine\t${voiceEngine}`;
+        const header = `voice_id\t${voiceId}\nvoice_engine\t${voiceEngine}\nvoice_speed\t${voiceSpeed}`;
         const colNames = `#id#\tchinese\tenglish`;
         const rows = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), normalizeEnglish(r.correctedEnglish)].join('\t'));
         const content = [header, colNames, ...rows].join('\n');
@@ -1347,6 +1348,7 @@ export default function App() {
           {
             voice_id: voiceId,
             voice_engine: voiceEngine,
+            voice_speed: voiceSpeed,
             items: auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: normalizeEnglish(r.correctedEnglish) })),
           },
           null, 2
@@ -2798,6 +2800,7 @@ export default function App() {
           onFolderName={setLibraryFolderName}
           onVoiceId={setVoiceId}
           onVoiceEngine={setVoiceEngine}
+          onVoiceSpeed={setVoiceSpeed}
         />
       </div>
 
