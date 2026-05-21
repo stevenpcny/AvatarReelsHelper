@@ -240,6 +240,13 @@ export default function App() {
 - 介词搭配：不修改。`,
     punctuation: `仅纠正明显的标点错误（如句末缺少标点、引号不配对）。
 如果一个完整句子（含主谓结构或完整语义）紧接着下一个句子但缺少句末标点，必须补上句号。
+
+【引号配对检查 — 必须执行】
+- 直双引号（"..."）：检查每个开引号是否有对应的闭引号，反之亦然。若不配对，补全缺失的一侧。
+- 弯双引号（“...”）：同上，左引号（“）与右引号（”）必须成对出现。
+- 直引号与弯引号混用：若同一对引号开头用弯引号、结尾用直引号（或相反），统一改为弯引号（“...”）。
+- 单引号/撇号（'）在缩写中（如 it's、don't、I'm）：这是撇号，不属于引号配对，不修改。
+
 注意以下情况【不需要修改】：
 - 圣经经文引用：不修改引用自圣经版本的标点，各版本有各自的标点规范。
 - 连续感叹号（如 !!!）或连续问号（如 ???）：口语情感强调，保持原样。
@@ -1004,12 +1011,12 @@ export default function App() {
           let english = '';
           if (tabIdx !== -1) {
             chinese = stripQuotes(withoutId.slice(0, tabIdx));
-            english = stripQuotes(withoutId.slice(tabIdx + 1));
+            english = stripQuotes(withoutId.slice(tabIdx + 1)).replace(/\s*\n\s*/g, ' ').trim();
           } else {
             // Only one column — determine by presence of Chinese characters
             const hasChinese = /[\u4e00-\u9fa5]/.test(withoutId);
             if (hasChinese) chinese = stripQuotes(withoutId);
-            else english = stripQuotes(withoutId);
+            else english = stripQuotes(withoutId).replace(/\s*\n\s*/g, ' ').trim();
           }
           parsedSegments.push({ id, chinese, english });
         }
@@ -1047,7 +1054,7 @@ export default function App() {
             if (match) lastChineseIndex += match[0].length;
           }
           const chinese = lastChineseIndex !== -1 ? rest.substring(0, lastChineseIndex + 1).trim() : '';
-          const english = lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim();
+          const english = (lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim()).replace(/\s*\n\s*/g, ' ').trim();
           const id = idStr ? idStr.replace(/[\.\s\t]+$/, '') : '1';
           parsedSegments.push({ id, chinese, english });
         }
@@ -1297,6 +1304,7 @@ export default function App() {
   };
 
   const normalizeChinese = (text: string) => text.replace(/\s*\n\s*/g, ' ').trim();
+  const normalizeEnglish = (text: string) => text.replace(/\s*\n\s*/g, ' ').trim();
 
   // Safe on both Windows (forbids \ / : * ? " < > |) and macOS (forbids / and null)
   const sanitizeFilename = (text: string, maxChars = 50): string =>
@@ -1331,7 +1339,7 @@ export default function App() {
       if (format === 'tsv') {
         const header = `voice_id\t${voiceId}\nvoice_engine\t${voiceEngine}`;
         const colNames = `#id#\tchinese\tenglish`;
-        const rows = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), r.correctedEnglish].join('\t'));
+        const rows = auditResults.map(r => [`#${r.id}#`, normalizeChinese(r.chinese), normalizeEnglish(r.correctedEnglish)].join('\t'));
         const content = [header, colNames, ...rows].join('\n');
         zip.file('copy.tsv', content);
       } else {
@@ -1339,7 +1347,7 @@ export default function App() {
           {
             voice_id: voiceId,
             voice_engine: voiceEngine,
-            items: auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: r.correctedEnglish })),
+            items: auditResults.map(r => ({ id: `#${r.id}#`, chinese: normalizeChinese(r.chinese), english: normalizeEnglish(r.correctedEnglish) })),
           },
           null, 2
         );
@@ -2242,7 +2250,7 @@ export default function App() {
                               setSelectedAuditIds(new Set());
                             } else {
                               setSelectedAuditIds(allIds);
-                              const lines = auditResults.map(r => r.correctedEnglish).join('\n');
+                              const lines = auditResults.map(r => normalizeEnglish(r.correctedEnglish)).join('\n');
                               copyToClipboard(lines);
                             }
                           }}
@@ -2277,7 +2285,7 @@ export default function App() {
                             onClick={() => {
                               const lines = auditResults
                                 .filter(r => selectedAuditIds.has(r.id))
-                                .map(r => r.correctedEnglish)
+                                .map(r => normalizeEnglish(r.correctedEnglish))
                                 .join('\n');
                               copyToClipboard(lines);
                               setSelectedAuditIds(new Set());
