@@ -192,7 +192,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
   }
 
   return (
-    <aside className="w-[300px] shrink-0 bg-white border-l border-neutral-200 flex flex-col overflow-hidden">
+    <aside className="w-[360px] shrink-0 bg-white border-l border-neutral-200 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-blue-500" />
@@ -253,44 +253,50 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
         )}
       </div>
 
-      <div className="px-4 py-2 border-b border-neutral-100 flex items-center gap-2">
-        <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-tight shrink-0">Voice ID:</span>
-        <input
-          type="text"
-          value={voiceId}
-          onChange={(e) => {
-            setVoiceId(e.target.value);
-            onVoiceId?.(e.target.value);
-          }}
-          placeholder="输入 Voice ID"
-          className="flex-1 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
-        />
-        <select
-          value={voiceEngine}
-          onChange={(e) => {
-            const v = e.target.value as VoiceEngine;
-            setVoiceEngine(v);
-            onVoiceEngine?.(v);
-          }}
-          className="text-[11px] font-medium text-neutral-700 border border-neutral-200 rounded px-2 py-1 focus:border-blue-400 bg-white outline-none"
-          title="Voice Engine"
-        >
-          {VOICE_ENGINES.map(eng => (
-            <option key={eng} value={eng}>{eng}</option>
-          ))}
-        </select>
-        <input
-          type="text"
-          inputMode="decimal"
-          value={voiceSpeed}
-          onChange={(e) => {
-            setVoiceSpeed(e.target.value);
-            onVoiceSpeed?.(e.target.value);
-          }}
-          placeholder="语速"
-          title="Voice Speed"
-          className="w-14 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
-        />
+      <div className="px-4 py-2 border-b border-neutral-100 flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-tight shrink-0">Voice ID:</span>
+          <input
+            type="text"
+            value={voiceId}
+            onChange={(e) => {
+              setVoiceId(e.target.value);
+              onVoiceId?.(e.target.value);
+            }}
+            placeholder="输入 Voice ID"
+            className="flex-1 min-w-0 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-tight shrink-0">Engine:</span>
+          <select
+            value={voiceEngine}
+            onChange={(e) => {
+              const v = e.target.value as VoiceEngine;
+              setVoiceEngine(v);
+              onVoiceEngine?.(v);
+            }}
+            className="flex-1 min-w-0 text-[11px] font-medium text-neutral-700 border border-neutral-200 rounded px-2 py-1 focus:border-blue-400 bg-white outline-none"
+            title="Voice Engine"
+          >
+            {VOICE_ENGINES.map(eng => (
+              <option key={eng} value={eng}>{eng}</option>
+            ))}
+          </select>
+          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-tight shrink-0">Speed:</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={voiceSpeed}
+            onChange={(e) => {
+              setVoiceSpeed(e.target.value);
+              onVoiceSpeed?.(e.target.value);
+            }}
+            placeholder="1.0"
+            title="Voice Speed"
+            className="w-14 shrink-0 text-[11px] font-medium text-neutral-700 outline-none border border-neutral-200 rounded px-2 py-1 focus:border-blue-400"
+          />
+        </div>
       </div>
 
       {needsPermission && (
