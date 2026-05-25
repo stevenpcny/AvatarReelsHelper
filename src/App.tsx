@@ -3200,7 +3200,7 @@ function AuditImageSlot({
       title={matchedImg
         ? `${matchedName} — 拖到 Heygen 上传`
         : '将右侧图片拖到这里完成匹配'}
-      className={`relative w-[120px] h-[120px] rounded-lg shrink-0 transition-all
+      className={`relative w-[240px] h-[240px] rounded-lg shrink-0 transition-all
         ${matchedImg
           ? 'cursor-grab active:cursor-grabbing border border-neutral-200 hover:border-blue-400 hover:shadow-md'
           : 'border-2 border-dashed border-neutral-300 bg-neutral-50 flex items-center justify-center'}
