@@ -353,7 +353,7 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
               {ids ? (
                 <div className="absolute top-1 left-1 flex flex-wrap gap-0.5">
                   {ids.map(id => (
-                    <span key={id} className="bg-blue-600 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 shadow leading-none">
+                    <span key={id} className="bg-blue-600 text-white text-[11.25px] font-black rounded-full px-1.5 py-0.5 shadow leading-none">
                       #{id}#
                     </span>
                   ))}

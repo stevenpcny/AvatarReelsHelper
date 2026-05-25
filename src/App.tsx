@@ -9,7 +9,7 @@ import {
   Image as ImageIcon, Loader2, AlertCircle,
   Plus, Save, Trash2, CheckCircle2,
   Layers, Play, X, ChevronRight, ChevronLeft, Settings2,
-  Square, CheckSquare, ShieldCheck, Type, Copy
+  Square, CheckSquare, ShieldCheck, Type, Copy, Shuffle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOpenRouterApiKey } from './utils/env';
@@ -1327,8 +1327,41 @@ export default function App() {
   };
 
   const [isBundling, setIsBundling] = useState(false);
+  const [unmatchedWarning, setUnmatchedWarning] = useState<{ format: 'tsv' | 'json'; ids: string[] } | null>(null);
 
-  const bundleDownload = async (format: 'tsv' | 'json') => {
+  const randomMatch = () => {
+    if (libraryImages.length === 0) {
+      alert('请先在右侧选择图片库文件夹。');
+      return;
+    }
+    const unmatched = auditResults.filter(r => !fileByName[matchMap[r.id]]);
+    if (unmatched.length === 0) return;
+
+    const shuffled = libraryImages.map(img => img.name);
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    setMatchMap(prev => {
+      const next = { ...prev };
+      unmatched.forEach((r, idx) => {
+        next[r.id] = shuffled[idx % shuffled.length];
+      });
+      return next;
+    });
+  };
+
+  const bundleDownload = (format: 'tsv' | 'json') => {
+    if (auditResults.length === 0 || isBundling) return;
+    const unmatchedIds = auditResults.filter(r => !fileByName[matchMap[r.id]]).map(r => r.id);
+    if (unmatchedIds.length > 0) {
+      setUnmatchedWarning({ format, ids: unmatchedIds });
+      return;
+    }
+    performBundleDownload(format);
+  };
+
+  const performBundleDownload = async (format: 'tsv' | 'json') => {
     if (auditResults.length === 0 || isBundling) return;
     setIsBundling(true);
 
@@ -2299,6 +2332,15 @@ export default function App() {
                           </button>
                         )}
                         <button
+                          onClick={randomMatch}
+                          disabled={libraryImages.length === 0}
+                          className="text-xs font-bold text-purple-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+                          title="把未匹配的文案随机配上图片，之后可手动调整"
+                        >
+                          <Shuffle className="w-3.5 h-3.5" />
+                          随机匹配
+                        </button>
+                        <button
                           onClick={() => bundleDownload('tsv')}
                           disabled={isBundling}
                           className="text-xs font-bold text-green-600 hover:underline flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
@@ -2995,6 +3037,57 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {unmatchedWarning && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setUnmatchedWarning(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-6"
+            >
+              <h3 className="text-lg font-bold text-neutral-900 mb-2 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-500" />
+                有文案尚未配图
+              </h3>
+              <p className="text-xs text-neutral-500 leading-relaxed mb-3">
+                以下 {unmatchedWarning.ids.length} 条文案还没有匹配图片，继续下载将不包含它们的配图。
+              </p>
+              <div className="flex flex-wrap gap-1.5 mb-5 max-h-32 overflow-y-auto">
+                {unmatchedWarning.ids.map(id => (
+                  <span key={id} className="px-2 py-0.5 bg-amber-100 text-[11px] font-black text-amber-700 rounded-full">
+                    #{id}#
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setUnmatchedWarning(null)}
+                  className="flex-1 py-3 text-xs font-bold text-neutral-400 hover:text-neutral-600"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => {
+                    const fmt = unmatchedWarning.format;
+                    setUnmatchedWarning(null);
+                    performBundleDownload(fmt);
+                  }}
+                  className="flex-[2] py-3 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 shadow-lg shadow-amber-100"
+                >
+                  仍然下载
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       {/* Hidden File Input */}
@@ -3123,7 +3216,7 @@ function AuditImageSlot({
           />
           <button
             onClick={(e) => { e.stopPropagation(); onClear(); }}
-            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow"
+            className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-base font-bold flex items-center justify-center shadow leading-none"
             title="清除匹配"
           >
             ×
