@@ -42,10 +42,11 @@ import urllib.request
 
 DEFAULT_BASE_URL = "https://avatar-reels-helper-76842936864.us-west1.run.app"
 DEFAULT_RULES = (
-    "只要情绪不冲突即可，不需要精确的主题或意境匹配。"
+    "原则上只要情绪不冲突即可，不需要精确的主题或意境匹配："
     "严肃、沉重、哀伤的文案，不要配欢笑、轻松、搞笑的图；"
-    "轻松、喜乐、欢庆的文案，不要配悲伤、压抑、严肃的图。"
+    "轻松、喜乐、欢庆的文案，不要配悲伤、压抑、严肃的图；"
     "只要基调不矛盾，任何合理的图都可以。"
+    "例外（具体场景优先）：如果文案是关于祷告的，就配祷告的图。"
 )
 
 
@@ -115,6 +116,9 @@ How to assign:
 2. Avoid tonal clashes (no smiling/laughing image on a grave line, and no
    sad/oppressive image on a joyful line). Among tonally-acceptable images,
    any reasonable choice is fine.
+2b. Specific-scene override: when a copy clearly names a concrete scene called
+   out in the matching rules (e.g. prayer), prefer an image of that scene
+   (e.g. a praying image) over a merely tone-consistent one.
 3. Every copyId MUST get exactly one filename from the list.
 4. Filenames MAY repeat across copyIds (when there are fewer images than copy).
 5. You need NOT use every image (when there are more images than copy).

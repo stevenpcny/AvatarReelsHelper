@@ -277,7 +277,7 @@ export default function App() {
   const [openRouterModels, setOpenRouterModels] = useState<any[]>([]);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('google/gemini-flash-1.5-exp:free');
-  const [customMatchingRules, setCustomMatchingRules] = useState('只要情绪不冲突即可，不需要精确意境匹配：严肃/沉重的文案不要配欢笑、搞笑的图，轻松/喜乐的文案不要配悲伤、压抑的图。基调不矛盾即可。');
+  const [customMatchingRules, setCustomMatchingRules] = useState('只要情绪不冲突即可，不需要精确意境匹配：严肃/沉重的文案不要配欢笑、搞笑的图，轻松/喜乐的文案不要配悲伤、压抑的图，基调不矛盾即可。例外：如果文案是关于祷告的，就配祷告的图。');
   const [viewMode, setViewMode] = useState<'grid' | 'edit'>('grid');
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [gridSize, setGridSize] = useState<'sm' | 'md' | 'lg'>('md');
