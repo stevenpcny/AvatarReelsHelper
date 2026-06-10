@@ -9,7 +9,7 @@ import {
   Image as ImageIcon, Loader2, AlertCircle,
   Plus, Save, Trash2, CheckCircle2,
   Layers, Play, X, ChevronRight, ChevronLeft, Settings2,
-  Square, CheckSquare, ShieldCheck, Type, Copy, Shuffle
+  Square, CheckSquare, ShieldCheck, Type, Copy, Shuffle, DownloadCloud
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOpenRouterApiKey } from './utils/env';
@@ -187,6 +187,8 @@ export default function App() {
   const [auditError, setAuditError] = useState<string | null>(null);
   const [auditTechnicalError, setAuditTechnicalError] = useState<any>(null);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isLoadingMatch, setIsLoadingMatch] = useState(false);
   const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextRetryIn: number } | null>(null);
   const [currentBatchSize, setCurrentBatchSize] = useState(15);
   const [activeModelId, setActiveModelId] = useState("gemini-3-flash-preview");
@@ -425,7 +427,8 @@ export default function App() {
     const savedImages = localStorage.getItem('copy-matcher-images');
     if (savedImages) {
       try {
-        setImages(JSON.parse(savedImages));
+        const restored = JSON.parse(savedImages);
+        setImages(Array.isArray(restored) ? restored.filter((x: any) => x?.original) : []);
       } catch (e) {
         console.error("Failed to load images from localStorage", e);
       }
@@ -603,20 +606,30 @@ export default function App() {
 
       files.forEach((file: File) => {
         const reader = new FileReader();
-        reader.onloadend = () => {
-          newImages.push({
-            id: Math.random().toString(36).substr(2, 9),
-            original: reader.result as string,
-            result: null,
-            status: 'idle',
-            name: file.name,
-            shouldOptimize: true
-          });
+        const finalize = () => {
           processedCount++;
-          if (processedCount === files.length) {
+          if (processedCount === files.length && newImages.length > 0) {
             setImages(prev => [...prev, ...newImages]);
             if (!selectedImageId) setSelectedImageId(newImages[0].id);
           }
+        };
+        reader.onload = () => {
+          const result = reader.result;
+          if (typeof result === 'string' && result) {
+            newImages.push({
+              id: Math.random().toString(36).substr(2, 9),
+              original: result,
+              result: null,
+              status: 'idle',
+              name: file.name,
+              shouldOptimize: true
+            });
+          }
+          finalize();
+        };
+        reader.onerror = () => {
+          console.warn(`Failed to read file: ${file.name}`, reader.error);
+          finalize();
         };
         reader.readAsDataURL(file);
       });
@@ -966,241 +979,41 @@ export default function App() {
   const handleAuditCopy = async (overrideText?: string) => {
     const textToProcess = overrideText || copywriting;
     if (!textToProcess) return;
-    
+
     setIsAuditing(true);
     setAuditError(null);
     setAuditTechnicalError(null);
     setRetryStatus(null);
     setAuditResults([]);
     setCopiedAuditTextKeys(new Set());
-    setActiveModelId("gemini-3-flash-preview"); // Reset to primary
-    
+    setActiveModelId("gemini-3-flash-preview");
+    setAuditProgress("校验中…");
+
     try {
-      const activeInstructions = Array.from(selectedAuditOptions)
-        .map(id => `- ${id === 'custom' ? '自定义指令' : id}: ${auditInstructions[id]}`)
-        .join('\n');
-
-      // ── Format detection ─────────────────────────────────────────────────────
-      // TSV format: rows like  "1[TAB]Chinese text[TAB]English text"
-      // Inline format: "1. 中文内容 English content"
-      const isTSV = /^\d+\t/m.test(textToProcess);
-
-      type Segment = { id: string; chinese: string; english: string };
-      const parsedSegments: Segment[] = [];
-
-      if (isTSV) {
-        // ── TSV parser ──────────────────────────────────────────────────────
-        // Find every row that starts with a number followed by a tab.
-        const rowStartRegex = /^(\d+)\t/gm;
-        const rowStarts = Array.from(textToProcess.matchAll(rowStartRegex)) as RegExpMatchArray[];
-
-        const stripQuotes = (s: string) =>
-          s.replace(/^[\s\u201c"]+|[\s\u201d"]+$/g, '').trim();
-
-        for (let i = 0; i < rowStarts.length; i++) {
-          const start = rowStarts[i].index!;
-          const end = i + 1 < rowStarts.length ? rowStarts[i + 1].index! : textToProcess.length;
-          const rowText = textToProcess.slice(start, end);
-          const id = rowStarts[i][1];
-
-          // Remove leading "id\t"
-          const withoutId = rowText.slice(id.length + 1);
-
-          // Split on the first tab to get Chinese column vs English column
-          const tabIdx = withoutId.indexOf('\t');
-          let chinese = '';
-          let english = '';
-          if (tabIdx !== -1) {
-            chinese = stripQuotes(withoutId.slice(0, tabIdx));
-            english = stripQuotes(withoutId.slice(tabIdx + 1)).replace(/\s*\n\s*/g, ' ').trim();
-          } else {
-            // Only one column — determine by presence of Chinese characters
-            const hasChinese = /[\u4e00-\u9fa5]/.test(withoutId);
-            if (hasChinese) chinese = stripQuotes(withoutId);
-            else english = stripQuotes(withoutId).replace(/\s*\n\s*/g, ' ').trim();
-          }
-          parsedSegments.push({ id, chinese, english });
-        }
-      } else {
-        // ── Inline parser ───────────────────────────────────────────────────
-        // Split text into segments by number (e.g., "1. ", "2. ")
-        // Handles cases where segments are joined without newlines
-        const segmentRegex = /(^|[\n\s.!?\"\'\u201c\u201d])(\d{1,3}[\.\s\t]+)(?=[\u201c"\u2018\'\s]*[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef])/g;
-        const segments: string[] = [];
-        const matches = Array.from(textToProcess.matchAll(segmentRegex)) as RegExpMatchArray[];
-
-        if (matches.length === 0) {
-          segments.push(textToProcess);
-        } else {
-          for (let i = 0; i < matches.length; i++) {
-            const start = matches[i].index! + matches[i][1].length;
-            const nextMatch = matches[i + 1];
-            const end = nextMatch ? (nextMatch.index! + nextMatch[1].length) : textToProcess.length;
-            segments.push(textToProcess.substring(start, end).trim());
-          }
-        }
-
-        for (const segment of segments) {
-          const idMatch = segment.match(/^(\d+[\.\s\t]+)/);
-          const idStr = idMatch ? idMatch[1] : '';
-          const rest = segment.substring(idStr.length);
-          let lastChineseIndex = -1;
-          const chineseRegex = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/;
-          for (let i = 0; i < rest.length; i++) {
-            if (chineseRegex.test(rest[i])) lastChineseIndex = i;
-          }
-          if (lastChineseIndex !== -1) {
-            const trailingPunctuation = /^[\s\u201c\u201d"\u2018\u2019\'\)\]}>]+/;
-            const match = rest.substring(lastChineseIndex + 1).match(trailingPunctuation);
-            if (match) lastChineseIndex += match[0].length;
-          }
-          const chinese = lastChineseIndex !== -1 ? rest.substring(0, lastChineseIndex + 1).trim() : '';
-          const english = (lastChineseIndex !== -1 ? rest.substring(lastChineseIndex + 1).trim() : rest.trim()).replace(/\s*\n\s*/g, ' ').trim();
-          const id = idStr ? idStr.replace(/[\.\s\t]+$/, '') : '1';
-          parsedSegments.push({ id, chinese, english });
-        }
+      // Server-side audit is now the canonical source of corrected copy.
+      // It returns a sessionId that Hermes later fetches to match images against.
+      const token = localStorage.getItem('access-token') || '';
+      const res = await fetch('/api/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
+        body: JSON.stringify({
+          copy: textToProcess,
+          options: Array.from(selectedAuditOptions),
+          instructions: auditInstructions,
+        }),
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('access-token');
+        setAccessToken(null);
+        throw new Error('登录已过期，请重新输入访问码');
       }
-
-      const uniqueParsedSegments: Segment[] = [];
-      const seenIds = new Set<string>();
-      for (const seg of parsedSegments) {
-        if (!seenIds.has(seg.id)) {
-          seenIds.add(seg.id);
-          uniqueParsedSegments.push(seg);
-        }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `API error ${res.status}`);
       }
-
-      console.log(`Found ${uniqueParsedSegments.length} unique segments to audit.`);
-      
-      let processingIndex = 0;
-      let batchSize = images.length > 0 ? 5 : 15;
-      let currentModel = "gemini-3-flash-preview";
-
-      while (processingIndex < uniqueParsedSegments.length) {
-        const remaining = uniqueParsedSegments.length - processingIndex;
-        const currentBatchSizeToUse = Math.min(batchSize, remaining);
-        const currentBatchNum = Math.ceil((processingIndex + 1) / batchSize);
-        const totalBatchesEstimated = Math.ceil(uniqueParsedSegments.length / batchSize);
-        
-        setAuditProgress(`${currentBatchNum} / ${totalBatchesEstimated}`);
-        
-        const batchItems = uniqueParsedSegments.slice(processingIndex, processingIndex + currentBatchSizeToUse);
-        // Audit any paragraph that has English content (skip pure-Chinese with no English).
-        // Bilingual paragraphs (Chinese + English) are included — only the English part is sent to AI.
-        const auditableItems = batchItems.filter(item => item.english && item.english.trim().length > 0);
-
-        if (auditableItems.length === 0) {
-          processingIndex += currentBatchSizeToUse;
-          continue;
-        }
-
-        const batchText = auditableItems.map(item => `${item.id}. ${item.english}`).join('\n\n');
-        
-        const traceId = generateTraceId();
-        setCurrentTraceId(traceId);
-
-        try {
-          // Timeout promise
-          let timeoutId: any;
-          const timeoutPromise = new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-              const err = new Error("质检请求超时，AI 引擎响应过慢。");
-              reject(err);
-            }, 120000);
-          });
-
-          const auditPromise = callWithRetry(
-            () => callGenerateAPI(
-              currentModel,
-              `你是一个专业的文案质检员。以下文案为基督教口播视频用途，包含神学术语和敬拜语言，请以此为背景进行质检。请对以下英文文案进行"AI 文案质检"。
-          
-          待处理英文文案：
-          ${batchText}
-          
-          质检要求：
-          ${activeInstructions}
-          
-          特别注意：
-          1. 识别以自然数字（1, 2, 3...）开头的段落。
-          2. 仅对英文部分进行纠错。
-          3. 绝对不要纠正介词搭配。
-          4. 绝对不要进行风格润色或改写。
-          5. 返回的 originalEnglish, markupEnglish, correctedEnglish 中，必须去除开头的序号和点号（例如不要返回 "1. Hello"，只返回 "Hello"）。
-          6. 返回结果中包含：
-             - id: 序号
-             - originalEnglish: 原始英文部分（不含序号）
-             - markupEnglish: 带有修改标记的英文（使用 ~~删除~~ 和 **新增** 标记差异，不含序号）
-             - correctedEnglish: 修正后的纯净英文（不含序号）
-          7. 关于 markupEnglish 的关键规则：只标记【实际发生了改变】的词。如果原文某个词已经是正确的（例如 He、His、Your 已经大写），则不要用任何标记包裹它，直接原样输出。markupEnglish 中有标记的部分必须与 originalEnglish 和 correctedEnglish 之间的实际差异完全对应。
-          
-          请以 JSON 数组格式返回结果。
-          示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]`,
-              { responseMimeType: "application/json" }
-            ),
-            3, 2000,
-            (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
-          );
-
-          const response = await Promise.race([auditPromise, timeoutPromise]) as any;
-          clearTimeout(timeoutId);
-          setRetryStatus(null);
-
-          const responseText = response.text;
-          if (!responseText) throw new Error("AI 返回了空响应。");
-
-          let cleanText = responseText.replace(/^```json\n?/g, '').replace(/```\n?$/g, '').trim();
-          const arrayStart = cleanText.indexOf('[');
-          const arrayEnd = cleanText.lastIndexOf(']');
-          if (arrayStart !== -1 && arrayEnd !== -1) {
-            cleanText = cleanText.substring(arrayStart, arrayEnd + 1);
-          }
-
-          const batchResults = JSON.parse(cleanText);
-          const mergedResults = batchResults.map((res: any) => {
-            const localItem = auditableItems.find(item => item.id === String(res.id)) || auditableItems[0];
-            const stripLeadingId = (text: string) => text ? text.replace(/^(\d+[\.\s\t]+)/, '').trim() : '';
-            return {
-              ...res,
-              originalEnglish: stripLeadingId(res.originalEnglish),
-              markupEnglish: stripLeadingId(res.markupEnglish),
-              correctedEnglish: stripLeadingId(res.correctedEnglish),
-              chinese: localItem ? localItem.chinese : ''
-            };
-          });
-
-          setAuditResults(prev => {
-            const newResults = [...prev];
-            for (const res of mergedResults) {
-              if (!newResults.some(r => r.id === res.id)) newResults.push(res);
-            }
-            return newResults;
-          });
-
-          // Success - move to next batch
-          processingIndex += currentBatchSizeToUse;
-        } catch (error: any) {
-          const normalized = normalizeError(error);
-          console.error(`[Trace:${traceId}] Batch failure:`, normalized);
-
-          // Adaptive Batching: If it's a timeout or truncation, shrink batch size
-          if (normalized.category === 'timeout' && batchSize > 2) {
-            batchSize = Math.max(2, Math.floor(batchSize / 2));
-            console.log(`[Trace:${traceId}] Reducing batch size to ${batchSize} due to timeout.`);
-            continue; // Retry with smaller batch
-          }
-
-          // Model Fallback: If Flash fails repeatedly or hits specific limits, try fallback
-          if (currentModel === "gemini-3-flash-preview") {
-            console.log(`[Trace:${traceId}] Falling back to gemini-1.5-flash-8b...`);
-            currentModel = "gemini-1.5-flash-8b";
-            setActiveModelId(currentModel);
-            continue; // Retry with safer model
-          }
-
-          // If fallback also fails or it's non-retryable
-          throw error;
-        }
-      }
+      const data = await res.json();
+      setSessionId(data.sessionId);
+      setAuditResults(data.results);
 
       if (images.length > 0) await matchImagesWithCopy();
     } catch (error: any) {
@@ -1349,6 +1162,38 @@ export default function App() {
       });
       return next;
     });
+  };
+
+  // Pull the matchMap Hermes wrote back for this session and merge it into the
+  // review grid so the human can visually verify image↔copy correctness.
+  const loadHermesMatch = async () => {
+    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
+    setIsLoadingMatch(true);
+    try {
+      const token = localStorage.getItem('access-token') || '';
+      const res = await fetch(`/api/session/${sessionId}/match`, {
+        headers: { 'x-access-token': token },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `加载失败 ${res.status}`);
+      }
+      const data = await res.json();
+      const incoming: MatchMap = data.matchMap || {};
+      if (Object.keys(incoming).length === 0) {
+        alert('Hermes 尚未为该 session 写入匹配结果。');
+        return;
+      }
+      setMatchMap(prev => ({ ...prev, ...incoming }));
+      const missing = Object.values(incoming).filter(name => !fileByName[name]);
+      if (missing.length > 0) {
+        alert(`已载入 ${Object.keys(incoming).length} 条匹配，但有 ${missing.length} 个文件名不在当前图片库（可能选错文件夹）：\n${missing.slice(0, 5).join('\n')}`);
+      }
+    } catch (e: any) {
+      alert(`载入 Hermes 匹配失败：${e.message}`);
+    } finally {
+      setIsLoadingMatch(false);
+    }
   };
 
   const bundleDownload = (format: 'tsv' | 'json') => {
@@ -1609,12 +1454,14 @@ export default function App() {
 
         const matchPromise = (async () => {
           if (matchingEngine === 'gemini') {
-            const imageParts = currentImagesBatch.map((img) => ({
-              inlineData: {
-                data: img.original.split(',')[1],
-                mimeType: img.original.split(';')[0].split(':')[1]
-              }
-            }));
+            const imageParts = currentImagesBatch
+              .filter((img) => typeof img.original === 'string' && img.original.startsWith('data:'))
+              .map((img) => ({
+                inlineData: {
+                  data: img.original.split(',')[1],
+                  mimeType: img.original.split(';')[0].split(':')[1]
+                }
+              }));
 
             const response = await callWithRetry(
               () => callGenerateAPI(
@@ -2331,6 +2178,15 @@ export default function App() {
                             复制已选 ({selectedAuditIds.size})
                           </button>
                         )}
+                        <button
+                          onClick={loadHermesMatch}
+                          disabled={!sessionId || isLoadingMatch}
+                          className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+                          title="拉取 Hermes 为本次 session 写回的图文匹配，供你视觉校验"
+                        >
+                          {isLoadingMatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadCloud className="w-3.5 h-3.5" />}
+                          {isLoadingMatch ? '载入中…' : '载入 Hermes 匹配'}
+                        </button>
                         <button
                           onClick={randomMatch}
                           disabled={libraryImages.length === 0}

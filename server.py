@@ -6,8 +6,11 @@ Also serves the compiled React frontend from ./dist.
 
 import base64
 import hmac
+import json
 import os
+import re
 import time
+import uuid
 from typing import Any, Optional
 
 from google import genai
@@ -21,6 +24,39 @@ from pydantic import BaseModel
 PROJECT  = os.getenv("VERTEX_PROJECT",  "project-2aed790f-b594-45e5-a62")
 LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 client = genai.Client(vertexai=True, project=PROJECT, location=LOCATION)
+
+# ── Session store (GCS-backed, stateless-friendly for Cloud Run) ─────────────
+# A session holds the server-side audited copy so Hermes can fetch the exact
+# same corrected text it must match images against.
+SESSION_BUCKET = os.getenv("SESSION_BUCKET", "")
+_gcs = None
+if SESSION_BUCKET:
+    from google.cloud import storage  # lazy: only when configured
+    _gcs = storage.Client(project=PROJECT)
+
+
+def _session_blob(session_id: str):
+    # Guard against path traversal via crafted ids.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="非法 session id")
+    return _gcs.bucket(SESSION_BUCKET).blob(f"sessions/{session_id}.json")
+
+
+def save_session(session_id: str, data: dict) -> None:
+    if not _gcs:
+        raise HTTPException(status_code=503, detail="SESSION_BUCKET 未配置")
+    _session_blob(session_id).upload_from_string(
+        json.dumps(data, ensure_ascii=False), content_type="application/json"
+    )
+
+
+def load_session(session_id: str) -> Optional[dict]:
+    if not _gcs:
+        raise HTTPException(status_code=503, detail="SESSION_BUCKET 未配置")
+    blob = _session_blob(session_id)
+    if not blob.exists():
+        return None
+    return json.loads(blob.download_as_text())
 
 # ── Model fallback chains (frontend name → ordered Vertex AI model list) ─────
 MODEL_FALLBACKS: dict[str, list[str]] = {
@@ -165,6 +201,254 @@ async def generate(req: GenerateRequest, x_access_token: str = Header(default=""
             last_exc = exc
 
     raise HTTPException(status_code=500, detail=str(last_exc))
+
+
+# ── Copy audit (校验) — ported from the former front-end logic ────────────────
+# Produces the canonical "corrected copy" stored in a session, which Hermes
+# later fetches to match images against.
+
+_CHINESE_CHAR = r"一-龥　-〿＀-￯"
+_TSV_ROW_START = re.compile(r"^(\d+)\t", re.MULTILINE)
+_SEG_RE = re.compile(
+    r'(^|[\n\s.!?"\'“”])(\d{1,3}[\.\s\t]+)'
+    r'(?=["\'“‘\s]*[' + _CHINESE_CHAR + r'])'
+)
+_ID_PREFIX = re.compile(r"^(\d+[\.\s\t]+)")
+_TRAILING_PUNCT = re.compile(r"^[\s“”\"‘’'\)\]}>]+")
+_CHINESE_TEST = re.compile(r"[" + _CHINESE_CHAR + r"]")
+
+
+def _strip_quotes(s: str) -> str:
+    return re.sub(r'^[\s“"]+|[\s”"]+$', "", s).strip()
+
+
+def _collapse_ws(s: str) -> str:
+    return re.sub(r"\s*\n\s*", " ", s).strip()
+
+
+def _strip_leading_id(text: str) -> str:
+    return _ID_PREFIX.sub("", text).strip() if text else ""
+
+
+def parse_copy(text: str) -> list[dict]:
+    """Split raw copy into segments {id, chinese, english}. Mirrors front-end."""
+    segments: list[dict] = []
+
+    if re.search(r"^\d+\t", text, re.MULTILINE):  # TSV format
+        starts = list(_TSV_ROW_START.finditer(text))
+        for i, m in enumerate(starts):
+            start = m.start()
+            end = starts[i + 1].start() if i + 1 < len(starts) else len(text)
+            row = text[start:end]
+            seg_id = m.group(1)
+            without_id = row[len(seg_id) + 1:]
+            tab_idx = without_id.find("\t")
+            chinese, english = "", ""
+            if tab_idx != -1:
+                chinese = _strip_quotes(without_id[:tab_idx])
+                english = _collapse_ws(_strip_quotes(without_id[tab_idx + 1:]))
+            elif _CHINESE_TEST.search(without_id):
+                chinese = _strip_quotes(without_id)
+            else:
+                english = _collapse_ws(_strip_quotes(without_id))
+            segments.append({"id": seg_id, "chinese": chinese, "english": english})
+    else:  # inline format
+        matches = list(_SEG_RE.finditer(text))
+        raw_segs: list[str] = []
+        if not matches:
+            raw_segs.append(text)
+        else:
+            for i, m in enumerate(matches):
+                start = m.start() + len(m.group(1))
+                end = (matches[i + 1].start() + len(matches[i + 1].group(1))
+                       if i + 1 < len(matches) else len(text))
+                raw_segs.append(text[start:end].strip())
+
+        for seg in raw_segs:
+            id_match = _ID_PREFIX.match(seg)
+            id_str = id_match.group(1) if id_match else ""
+            rest = seg[len(id_str):]
+            last_cn = -1
+            for i, ch in enumerate(rest):
+                if _CHINESE_TEST.match(ch):
+                    last_cn = i
+            if last_cn != -1:
+                tail = _TRAILING_PUNCT.match(rest[last_cn + 1:])
+                if tail:
+                    last_cn += len(tail.group(0))
+            chinese = rest[:last_cn + 1].strip() if last_cn != -1 else ""
+            english = _collapse_ws(rest[last_cn + 1:] if last_cn != -1 else rest)
+            seg_id = re.sub(r"[\.\s\t]+$", "", id_str) if id_str else "1"
+            segments.append({"id": seg_id, "chinese": chinese, "english": english})
+
+    # Dedupe by id (keep first).
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for s in segments:
+        if s["id"] not in seen:
+            seen.add(s["id"])
+            unique.append(s)
+    return unique
+
+
+_AUDIT_PROMPT = """你是一个专业的文案质检员。以下文案为基督教口播视频用途，包含神学术语和敬拜语言，请以此为背景进行质检。请对以下英文文案进行"AI 文案质检"。
+
+待处理英文文案：
+__BATCH__
+
+质检要求：
+__INSTR__
+
+特别注意：
+1. 识别以自然数字（1, 2, 3...）开头的段落。
+2. 仅对英文部分进行纠错。
+3. 绝对不要纠正介词搭配。
+4. 绝对不要进行风格润色或改写。
+5. 返回的 originalEnglish, markupEnglish, correctedEnglish 中，必须去除开头的序号和点号（例如不要返回 "1. Hello"，只返回 "Hello"）。
+6. 返回结果中包含：
+   - id: 序号
+   - originalEnglish: 原始英文部分（不含序号）
+   - markupEnglish: 带有修改标记的英文（使用 ~~删除~~ 和 **新增** 标记差异，不含序号）
+   - correctedEnglish: 修正后的纯净英文（不含序号）
+7. 关于 markupEnglish 的关键规则：只标记【实际发生了改变】的词。如果原文某个词已经是正确的（例如 He、His、Your 已经大写），则不要用任何标记包裹它，直接原样输出。markupEnglish 中有标记的部分必须与 originalEnglish 和 correctedEnglish 之间的实际差异完全对应。
+
+请以 JSON 数组格式返回结果。
+示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]"""
+
+
+def _generate_text(model: str, prompt: str) -> str:
+    """Call Vertex Gemini with the model fallback chain, return text."""
+    candidates = MODEL_FALLBACKS.get(model, [model])
+    config = build_config({"responseMimeType": "application/json"})
+    last_exc: Exception = RuntimeError("No models tried")
+    for model_name in candidates:
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=[types.Part.from_text(text=prompt)],
+                config=config,
+            )
+            return resp.text or ""
+        except Exception as exc:  # noqa: BLE001
+            print(f"[audit fallback] {model_name} failed: {exc}")
+            last_exc = exc
+    raise HTTPException(status_code=500, detail=str(last_exc))
+
+
+def _parse_audit_json(text: str) -> list[dict]:
+    clean = re.sub(r"^```json\n?", "", text).rstrip()
+    clean = re.sub(r"```\n?$", "", clean).strip()
+    start, end = clean.find("["), clean.rfind("]")
+    if start != -1 and end != -1:
+        clean = clean[start:end + 1]
+    return json.loads(clean)
+
+
+class AuditRequest(BaseModel):
+    copy: str
+    options: list[str] = []
+    instructions: dict[str, str] = {}
+
+
+def _require_auth(token: str) -> None:
+    if ACCESS_CODE and not hmac.compare_digest(token, _make_token(ACCESS_CODE)):
+        raise HTTPException(status_code=401, detail="未授权，请刷新页面重新登录")
+
+
+@app.post("/api/audit")
+async def audit(req: AuditRequest, x_access_token: str = Header(default="")):
+    _require_auth(x_access_token)
+
+    active_instructions = "\n".join(
+        f"- {'自定义指令' if oid == 'custom' else oid}: {req.instructions.get(oid, '')}"
+        for oid in req.options
+    )
+
+    segments = parse_copy(req.copy)
+    results: list[dict] = []
+    batch_size = 15
+
+    for i in range(0, len(segments), batch_size):
+        batch = segments[i:i + batch_size]
+        auditable = [s for s in batch if s["english"].strip()]
+        if not auditable:
+            continue
+
+        batch_text = "\n\n".join(f"{s['id']}. {s['english']}" for s in auditable)
+        prompt = _AUDIT_PROMPT.replace("__BATCH__", batch_text).replace(
+            "__INSTR__", active_instructions
+        )
+
+        text = _generate_text("gemini-3-flash-preview", prompt)
+        if not text:
+            raise HTTPException(status_code=500, detail="AI 返回了空响应。")
+
+        by_id = {s["id"]: s for s in auditable}
+        for res in _parse_audit_json(text):
+            local = by_id.get(str(res.get("id")), auditable[0])
+            if any(r["id"] == str(res.get("id")) for r in results):
+                continue
+            results.append({
+                "id": str(res.get("id")),
+                "chinese": local["chinese"],
+                "originalEnglish": _strip_leading_id(res.get("originalEnglish", "")),
+                "markupEnglish": _strip_leading_id(res.get("markupEnglish", "")),
+                "correctedEnglish": _strip_leading_id(res.get("correctedEnglish", "")),
+            })
+
+    session_id = uuid.uuid4().hex
+    save_session(session_id, {
+        "sessionId": session_id,
+        "createdAt": int(time.time()),
+        "results": results,
+        # Canonical corrected copy Hermes matches images against.
+        "copyForMatch": [
+            {"id": r["id"], "chinese": r["chinese"], "english": r["correctedEnglish"]}
+            for r in results
+        ],
+    })
+    return {"sessionId": session_id, "results": results}
+
+
+@app.get("/api/session/{session_id}")
+async def get_session(session_id: str, x_access_token: str = Header(default="")):
+    _require_auth(x_access_token)
+    data = load_session(session_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session 不存在或已过期")
+    return data
+
+
+class MatchMapRequest(BaseModel):
+    # { copyId -> imageFilename }
+    matchMap: dict[str, str]
+
+
+@app.put("/api/session/{session_id}/match")
+async def put_match(
+    session_id: str,
+    req: MatchMapRequest,
+    x_access_token: str = Header(default=""),
+):
+    """Hermes writes the image↔copy match result back for human review."""
+    _require_auth(x_access_token)
+    data = load_session(session_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session 不存在或已过期")
+    data["matchMap"] = req.matchMap
+    data["matchedAt"] = int(time.time())
+    save_session(session_id, data)
+    return {"ok": True, "count": len(req.matchMap)}
+
+
+@app.get("/api/session/{session_id}/match")
+async def get_match(session_id: str, x_access_token: str = Header(default="")):
+    """UI pulls the matchMap Hermes wrote, to render the visual review grid."""
+    _require_auth(x_access_token)
+    data = load_session(session_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session 不存在或已过期")
+    return {"matchMap": data.get("matchMap", {}), "matchedAt": data.get("matchedAt")}
 
 
 # ── Serve compiled React SPA ──────────────────────────────────────────────────
