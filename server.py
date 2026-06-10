@@ -13,10 +13,12 @@ import time
 import uuid
 from typing import Any, Optional
 
+from datetime import timedelta
+
 from google import genai
 from google.genai import types
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -57,6 +59,74 @@ def load_session(session_id: str) -> Optional[dict]:
     if not blob.exists():
         return None
     return json.loads(blob.download_as_text())
+
+
+# ── Image storage in GCS (uploaded from the user's machine for remote Hermes) ─
+
+def _valid_id(session_id: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        raise HTTPException(status_code=400, detail="非法 session id")
+    return session_id
+
+
+def _safe_name(name: str) -> str:
+    # Keep unicode (Chinese) filenames but block path traversal / separators.
+    base = os.path.basename(name).replace("\\", "")
+    if not base or base in (".", ".."):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    return base
+
+
+def _image_blob(session_id: str, name: str):
+    return _gcs.bucket(SESSION_BUCKET).blob(
+        f"sessions/{_valid_id(session_id)}/images/{_safe_name(name)}"
+    )
+
+
+def _signer():
+    """Credentials capable of v4 signing via IAM signBlob (no key file needed
+    on Cloud Run). Requires roles/iam.serviceAccountTokenCreator on the SA."""
+    import google.auth
+    from google.auth.transport import requests as ga_requests
+    creds, _ = google.auth.default()
+    creds.refresh(ga_requests.Request())
+    email = getattr(creds, "service_account_email", None)
+    if not email or email == "default":
+        import urllib.request
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/"
+            "service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        email = urllib.request.urlopen(req, timeout=5).read().decode()
+    return creds, email
+
+
+def signed_put_url(session_id: str, name: str, content_type: str) -> str:
+    creds, email = _signer()
+    return _image_blob(session_id, name).generate_signed_url(
+        version="v4",
+        expiration=timedelta(minutes=30),
+        method="PUT",
+        content_type=content_type,
+        service_account_email=email,
+        access_token=creds.token,
+    )
+
+
+def list_session_images(session_id: str) -> list[dict]:
+    prefix = f"sessions/{_valid_id(session_id)}/images/"
+    out = []
+    for b in _gcs.bucket(SESSION_BUCKET).list_blobs(prefix=prefix):
+        name = b.name[len(prefix):]
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "gsUri": f"gs://{SESSION_BUCKET}/{b.name}",
+            "mime": b.content_type or "image/jpeg",
+        })
+    return out
 
 # ── Model fallback chains (frontend name → ordered Vertex AI model list) ─────
 MODEL_FALLBACKS: dict[str, list[str]] = {
@@ -118,6 +188,12 @@ def build_contents(contents: Any) -> list:
                 parts.append(types.Part.from_bytes(
                     data=raw_bytes,
                     mime_type=p["inlineData"]["mimeType"]
+                ))
+            elif "fileData" in p:
+                # gs:// URI — Vertex reads directly from GCS (used by remote Hermes).
+                parts.append(types.Part.from_uri(
+                    file_uri=p["fileData"]["fileUri"],
+                    mime_type=p["fileData"]["mimeType"],
                 ))
     return parts
 
@@ -448,7 +524,81 @@ async def get_match(session_id: str, x_access_token: str = Header(default="")):
     data = load_session(session_id)
     if data is None:
         raise HTTPException(status_code=404, detail="session 不存在或已过期")
-    return {"matchMap": data.get("matchMap", {}), "matchedAt": data.get("matchedAt")}
+    return {
+        "matchMap": data.get("matchMap", {}),
+        "matchedAt": data.get("matchedAt"),
+        "confirmed": data.get("confirmed", False),
+        "confirmedAt": data.get("confirmedAt"),
+    }
+
+
+# ── Image upload / listing / download (for a remote Hermes) ──────────────────
+
+class UploadFile(BaseModel):
+    name: str
+    contentType: str = "image/jpeg"
+
+
+class UploadUrlsRequest(BaseModel):
+    files: list[UploadFile]
+
+
+@app.post("/api/session/{session_id}/upload-urls")
+async def upload_urls(
+    session_id: str,
+    req: UploadUrlsRequest,
+    x_access_token: str = Header(default=""),
+):
+    """Issue v4 signed PUT URLs so the browser uploads images straight to GCS."""
+    _require_auth(x_access_token)
+    return {"uploads": [
+        {
+            "name": f.name,
+            "contentType": f.contentType,
+            "uploadUrl": signed_put_url(session_id, f.name, f.contentType),
+        }
+        for f in req.files
+    ]}
+
+
+@app.get("/api/session/{session_id}/images")
+async def get_images(session_id: str, x_access_token: str = Header(default="")):
+    """List images uploaded under a session (name + gs:// URI for matching)."""
+    _require_auth(x_access_token)
+    return {"images": list_session_images(session_id)}
+
+
+@app.get("/api/session/{session_id}/image/{name}")
+async def download_image(
+    session_id: str, name: str, x_access_token: str = Header(default="")
+):
+    """Proxy the raw image bytes (used by Hermes to pull confirmed results)."""
+    _require_auth(x_access_token)
+    blob = _image_blob(session_id, name)
+    if not blob.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return Response(
+        content=blob.download_as_bytes(),
+        media_type=blob.content_type or "application/octet-stream",
+    )
+
+
+@app.post("/api/session/{session_id}/confirm")
+async def confirm_match(
+    session_id: str,
+    req: MatchMapRequest,
+    x_access_token: str = Header(default=""),
+):
+    """UI writes back the human-confirmed (possibly hand-corrected) matchMap."""
+    _require_auth(x_access_token)
+    data = load_session(session_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session 不存在或已过期")
+    data["matchMap"] = req.matchMap
+    data["confirmed"] = True
+    data["confirmedAt"] = int(time.time())
+    save_session(session_id, data)
+    return {"ok": True, "count": len(req.matchMap)}
 
 
 # ── Serve compiled React SPA ──────────────────────────────────────────────────

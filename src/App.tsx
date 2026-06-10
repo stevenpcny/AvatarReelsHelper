@@ -189,6 +189,9 @@ export default function App() {
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingMatch, setIsLoadingMatch] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextRetryIn: number } | null>(null);
   const [currentBatchSize, setCurrentBatchSize] = useState(15);
   const [activeModelId, setActiveModelId] = useState("gemini-3-flash-preview");
@@ -1196,6 +1199,88 @@ export default function App() {
     }
   };
 
+  // Upload the locally-selected image folder to GCS (under the session) so a
+  // remote Hermes can read them. Browser PUTs directly to GCS via signed URLs.
+  const uploadImagesForHermes = async () => {
+    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
+    if (libraryImages.length === 0) { alert('请先在右侧选择图片库文件夹。'); return; }
+    setIsUploading(true);
+    setUploadProgress(`0 / ${libraryImages.length}`);
+    try {
+      const token = localStorage.getItem('access-token') || '';
+      const res = await fetch(`/api/session/${sessionId}/upload-urls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
+        body: JSON.stringify({
+          files: libraryImages.map(img => ({
+            name: img.name,
+            contentType: img.file.type || 'image/jpeg',
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `获取上传地址失败 ${res.status}`);
+      }
+      const { uploads } = await res.json();
+      const urlByName: Record<string, { uploadUrl: string; contentType: string }> = {};
+      for (const u of uploads) urlByName[u.name] = u;
+
+      let done = 0;
+      // Upload with limited concurrency to keep things stable on big folders.
+      const queue = [...libraryImages];
+      const worker = async () => {
+        while (queue.length) {
+          const img = queue.shift()!;
+          const u = urlByName[img.name];
+          const put = await fetch(u.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': u.contentType },
+            body: img.file,
+          });
+          if (!put.ok) throw new Error(`上传 ${img.name} 失败 (${put.status})`);
+          done++;
+          setUploadProgress(`${done} / ${libraryImages.length}`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, libraryImages.length) }, worker));
+      alert(`已上传 ${done} 张图片，可让远程 Hermes 用 session ${sessionId} 匹配了。`);
+    } catch (e: any) {
+      alert(`上传失败：${e.message}`);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
+    }
+  };
+
+  // Write the human-confirmed (possibly hand-corrected) matchMap back so Hermes
+  // can pull the final result and download images for downstream processing.
+  const confirmMatch = async () => {
+    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
+    const matched = auditResults.filter(r => matchMap[r.id]);
+    if (matched.length === 0) { alert('当前没有任何匹配可确认。'); return; }
+    setIsConfirming(true);
+    try {
+      const token = localStorage.getItem('access-token') || '';
+      const finalMap: MatchMap = {};
+      for (const r of auditResults) if (matchMap[r.id]) finalMap[r.id] = matchMap[r.id];
+      const res = await fetch(`/api/session/${sessionId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
+        body: JSON.stringify({ matchMap: finalMap }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `确认失败 ${res.status}`);
+      }
+      alert(`已确认 ${matched.length} 条匹配。Hermes 现在可执行 finalize 下载成品。`);
+    } catch (e: any) {
+      alert(`确认失败：${e.message}`);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   const bundleDownload = (format: 'tsv' | 'json') => {
     if (auditResults.length === 0 || isBundling) return;
     const unmatchedIds = auditResults.filter(r => !fileByName[matchMap[r.id]]).map(r => r.id);
@@ -2179,6 +2264,15 @@ export default function App() {
                           </button>
                         )}
                         <button
+                          onClick={uploadImagesForHermes}
+                          disabled={!sessionId || isUploading || libraryImages.length === 0}
+                          className="text-xs font-bold text-sky-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+                          title="把当前图片库上传到云端，供远程 Hermes 匹配"
+                        >
+                          {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                          {isUploading ? `上传中 ${uploadProgress ?? ''}` : '上传图片供 Hermes'}
+                        </button>
+                        <button
                           onClick={loadHermesMatch}
                           disabled={!sessionId || isLoadingMatch}
                           className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
@@ -2186,6 +2280,15 @@ export default function App() {
                         >
                           {isLoadingMatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadCloud className="w-3.5 h-3.5" />}
                           {isLoadingMatch ? '载入中…' : '载入 Hermes 匹配'}
+                        </button>
+                        <button
+                          onClick={confirmMatch}
+                          disabled={!sessionId || isConfirming}
+                          className="text-xs font-bold text-emerald-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
+                          title="确认当前图文匹配（含手动纠错），供 Hermes 下载成品"
+                        >
+                          {isConfirming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                          {isConfirming ? '确认中…' : '确认匹配'}
                         </button>
                         <button
                           onClick={randomMatch}
