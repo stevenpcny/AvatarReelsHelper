@@ -41,7 +41,12 @@ import urllib.error
 import urllib.request
 
 DEFAULT_BASE_URL = "https://avatar-reels-helper-76842936864.us-west1.run.app"
-DEFAULT_RULES = "根据文案的情感基调和核心关键词，匹配最符合意境的图片。"
+DEFAULT_RULES = (
+    "只要情绪不冲突即可，不需要精确的主题或意境匹配。"
+    "严肃、沉重、哀伤的文案，不要配欢笑、轻松、搞笑的图；"
+    "轻松、喜乐、欢庆的文案，不要配悲伤、压抑、严肃的图。"
+    "只要基调不矛盾，任何合理的图都可以。"
+)
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -91,8 +96,9 @@ def _build_prompt(copy_entries: list[dict], image_names: list[str], rules: str) 
         for e in copy_entries
     )
     name_lines = "\n".join(f"  - {n}" for n in image_names)
-    return f"""You are an AI matching tool. Match each copy entry to the single most
-appropriate image filename, based on emotion, theme and the custom rules.
+    return f"""You assign an image to each copy entry. The ONLY hard requirement
+is emotional consistency: the image's mood must not contradict the copy's mood.
+Precise thematic/semantic matching is NOT required.
 
 Copy entries:
 {copy_lines}
@@ -100,13 +106,19 @@ Copy entries:
 Available image filenames (each shown below as an image):
 {name_lines}
 
-Custom matching rules:
+Matching rules:
 {rules}
 
-Rules:
-1. Every copyId MUST be assigned exactly one filename from the list above.
-2. Multiple copyIds MAY share the same filename if appropriate.
-3. Return ONLY a JSON array, no prose:
+How to assign:
+1. Judge each copy's emotional tone (serious / sorrowful / solemn vs.
+   light / joyful / celebratory) and each image's tone.
+2. Avoid tonal clashes (no smiling/laughing image on a grave line, and no
+   sad/oppressive image on a joyful line). Among tonally-acceptable images,
+   any reasonable choice is fine.
+3. Every copyId MUST get exactly one filename from the list.
+4. Filenames MAY repeat across copyIds (when there are fewer images than copy).
+5. You need NOT use every image (when there are more images than copy).
+6. Return ONLY a JSON array, no prose:
    [{{"copyId": "1", "filename": "exact_name.jpg"}}, ...]
 """
 
