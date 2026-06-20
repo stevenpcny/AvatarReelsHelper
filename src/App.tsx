@@ -2247,6 +2247,17 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex gap-4 items-center">
+                        {sessionId && (
+                          <button
+                            onClick={() => copyToClipboard(sessionId)}
+                            className="text-[11px] font-mono text-neutral-600 bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all"
+                            title="复制完整 Session ID，交给 Hermes 用于匹配本次校验后的文案"
+                          >
+                            <span className="text-neutral-400 font-sans">Session</span>
+                            {sessionId.slice(0, 6)}…{sessionId.slice(-4)}
+                            <Copy className="w-3 h-3 text-neutral-400" />
+                          </button>
+                        )}
                         {selectedAuditIds.size > 0 && (
                           <button
                             onClick={() => {
@@ -2255,12 +2266,12 @@ export default function App() {
                                 .map(r => normalizeEnglish(r.correctedEnglish))
                                 .join('\n');
                               copyToClipboard(lines);
-                              setSelectedAuditIds(new Set());
                             }}
                             className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all shadow-sm shadow-blue-200"
+                            title="复制选中条目的英文文案，每条一行，可直接粘贴到 Google Sheet"
                           >
                             <Copy className="w-3.5 h-3.5" />
-                            复制已选 ({selectedAuditIds.size})
+                            复制英文到 Sheet ({selectedAuditIds.size})
                           </button>
                         )}
                         <button

@@ -302,8 +302,21 @@ def _collapse_ws(s: str) -> str:
     return re.sub(r"\s*\n\s*", " ", s).strip()
 
 
-def _strip_leading_id(text: str) -> str:
-    return _ID_PREFIX.sub("", text).strip() if text else ""
+def _strip_leading_id(text: str, seg_id: str = "") -> str:
+    """Strip a leading "[id] " or "id. " prefix the model may have echoed back.
+
+    Only strips a numeric prefix when it equals seg_id, so a body that
+    legitimately begins with a number (e.g. "1. Life is a gift.") is left intact.
+    """
+    if not text:
+        return ""
+    text = text.strip()
+    if seg_id:
+        m = re.match(r"^\[?(\d+)\]?[\.\s\t]+", text)
+        if m and m.group(1) == str(seg_id):
+            return text[m.end():].strip()
+        return text
+    return _ID_PREFIX.sub("", text).strip()
 
 
 def parse_copy(text: str) -> list[dict]:
@@ -369,23 +382,23 @@ def parse_copy(text: str) -> list[dict]:
 
 _AUDIT_PROMPT = """你是一个专业的文案质检员。以下文案为基督教口播视频用途，包含神学术语和敬拜语言，请以此为背景进行质检。请对以下英文文案进行"AI 文案质检"。
 
-待处理英文文案：
+待处理英文文案（每段以 [id] 形式给出段落标识）：
 __BATCH__
 
 质检要求：
 __INSTR__
 
 特别注意：
-1. 识别以自然数字（1, 2, 3...）开头的段落。
+1. 每段开头的 [id] 只是段落标识，输出时不要包含它（例如输入 "[1] Hello"，输出 "Hello"）。
 2. 仅对英文部分进行纠错。
 3. 绝对不要纠正介词搭配。
 4. 绝对不要进行风格润色或改写。
-5. 返回的 originalEnglish, markupEnglish, correctedEnglish 中，必须去除开头的序号和点号（例如不要返回 "1. Hello"，只返回 "Hello"）。
+5. 正文中出现的所有数字一律原样保留，禁止删除或改动；尤其是 "1. ... 2. ... 3. ..." 这类内嵌的编号清单，它们是正文内容而非段落序号，必须完整保留。
 6. 返回结果中包含：
-   - id: 序号
-   - originalEnglish: 原始英文部分（不含序号）
-   - markupEnglish: 带有修改标记的英文（使用 ~~删除~~ 和 **新增** 标记差异，不含序号）
-   - correctedEnglish: 修正后的纯净英文（不含序号）
+   - id: 段落标识（即 [id] 中的数字）
+   - originalEnglish: 原始英文部分（不含 [id]）
+   - markupEnglish: 带有修改标记的英文（使用 ~~删除~~ 和 **新增** 标记差异，不含 [id]）
+   - correctedEnglish: 修正后的纯净英文（不含 [id]）
 7. 关于 markupEnglish 的关键规则：只标记【实际发生了改变】的词。如果原文某个词已经是正确的（例如 He、His、Your 已经大写），则不要用任何标记包裹它，直接原样输出。markupEnglish 中有标记的部分必须与 originalEnglish 和 correctedEnglish 之间的实际差异完全对应。
 
 请以 JSON 数组格式返回结果。
@@ -450,7 +463,7 @@ async def audit(req: AuditRequest, x_access_token: str = Header(default="")):
         if not auditable:
             continue
 
-        batch_text = "\n\n".join(f"{s['id']}. {s['english']}" for s in auditable)
+        batch_text = "\n\n".join(f"[{s['id']}] {s['english']}" for s in auditable)
         prompt = _AUDIT_PROMPT.replace("__BATCH__", batch_text).replace(
             "__INSTR__", active_instructions
         )
@@ -467,9 +480,9 @@ async def audit(req: AuditRequest, x_access_token: str = Header(default="")):
             results.append({
                 "id": str(res.get("id")),
                 "chinese": local["chinese"],
-                "originalEnglish": _strip_leading_id(res.get("originalEnglish", "")),
-                "markupEnglish": _strip_leading_id(res.get("markupEnglish", "")),
-                "correctedEnglish": _strip_leading_id(res.get("correctedEnglish", "")),
+                "originalEnglish": _strip_leading_id(res.get("originalEnglish", ""), str(res.get("id"))),
+                "markupEnglish": _strip_leading_id(res.get("markupEnglish", ""), str(res.get("id"))),
+                "correctedEnglish": _strip_leading_id(res.get("correctedEnglish", ""), str(res.get("id"))),
             })
 
     session_id = uuid.uuid4().hex
