@@ -294,6 +294,10 @@ _TRAILING_PUNCT = re.compile(r"^[\s“”\"‘’'\)\]}>]+")
 _CHINESE_TEST = re.compile(r"[" + _CHINESE_CHAR + r"]")
 
 
+def _has_chinese(s: str) -> bool:
+    return bool(_CHINESE_TEST.search(s or ""))
+
+
 def _strip_quotes(s: str) -> str:
     return re.sub(r'^[\s“"]+|[\s”"]+$', "", s).strip()
 
@@ -477,12 +481,14 @@ async def audit(req: AuditRequest, x_access_token: str = Header(default="")):
             local = by_id.get(str(res.get("id")), auditable[0])
             if any(r["id"] == str(res.get("id")) for r in results):
                 continue
+            corrected = _strip_leading_id(res.get("correctedEnglish", ""), str(res.get("id")))
             results.append({
                 "id": str(res.get("id")),
                 "chinese": local["chinese"],
                 "originalEnglish": _strip_leading_id(res.get("originalEnglish", ""), str(res.get("id"))),
                 "markupEnglish": _strip_leading_id(res.get("markupEnglish", ""), str(res.get("id"))),
-                "correctedEnglish": _strip_leading_id(res.get("correctedEnglish", ""), str(res.get("id"))),
+                "correctedEnglish": corrected,
+                "qcEnglishHasChinese": _has_chinese(corrected),
             })
 
     session_id = uuid.uuid4().hex

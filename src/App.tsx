@@ -202,6 +202,7 @@ export default function App() {
     originalEnglish: string;
     markupEnglish: string;
     correctedEnglish: string;
+    qcEnglishHasChinese?: boolean;
   }[]>([]);
   const [autoMatchWithImages, setAutoMatchWithImages] = useState(false);
   const [autoOptimizeImages, setAutoOptimizeImages] = useState(false);
@@ -2378,6 +2379,9 @@ export default function App() {
                                 : <Square className="w-3.5 h-3.5 text-neutral-300 shrink-0" />}
                               <span className="px-1.5 py-0.5 bg-emerald-100 text-[9px] font-black text-emerald-700 rounded uppercase tracking-widest">{res.id}</span>
                               <span className="text-sm font-semibold text-neutral-800">{res.chinese}</span>
+                              {res.qcEnglishHasChinese && (
+                                <span className="px-1.5 py-0.5 bg-red-100 text-[9px] font-black text-red-700 rounded uppercase tracking-widest shrink-0">⚠ 英文含中文</span>
+                              )}
                             </div>
                             <div className="flex items-center gap-3 shrink-0">
                               <div className="text-[10px] font-medium text-neutral-400">
