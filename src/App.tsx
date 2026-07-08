@@ -9,7 +9,7 @@ import {
   Image as ImageIcon, Loader2, AlertCircle,
   Plus, Save, Trash2, CheckCircle2,
   Layers, Play, X, ChevronRight, ChevronLeft, Settings2,
-  Square, CheckSquare, ShieldCheck, Type, Copy, Shuffle, DownloadCloud
+  Square, CheckSquare, ShieldCheck, Type, Copy, Shuffle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getOpenRouterApiKey } from './utils/env';
@@ -18,6 +18,7 @@ import {
   loadMatchMap, saveMatchMap, INTERNAL_IMAGE_MIME,
   type MatchMap, type LoadedImage,
 } from './utils/imageMatch';
+import { runCopyAudit } from './utils/copyAudit';
 import JSZip from 'jszip';
 
 interface ImageItem {
@@ -187,11 +188,6 @@ export default function App() {
   const [auditError, setAuditError] = useState<string | null>(null);
   const [auditTechnicalError, setAuditTechnicalError] = useState<any>(null);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isLoadingMatch, setIsLoadingMatch] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
   const [retryStatus, setRetryStatus] = useState<{ attempt: number; total: number; nextRetryIn: number } | null>(null);
   const [currentBatchSize, setCurrentBatchSize] = useState(15);
   const [activeModelId, setActiveModelId] = useState("gemini-3-flash-preview");
@@ -980,6 +976,66 @@ export default function App() {
     throw lastError;
   };
 
+  // Calls the public Gemini API directly with the user's own key — no Vertex/backend involved.
+  const callGeminiDirect = async (prompt: string): Promise<string> => {
+    if (!geminiApiKey) throw new Error('请先填写 Gemini API Key');
+    const candidates = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    let lastErr: any = new Error('No models tried');
+    for (const model of candidates) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json' },
+            }),
+          }
+        );
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Gemini API error ${res.status}`);
+        }
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error('Gemini 返回了空响应。');
+        return text;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr;
+  };
+
+  const callOpenRouterText = async (prompt: string): Promise<string> => {
+    const apiKey = openRouterApiKey || getOpenRouterApiKey();
+    if (!apiKey) throw new Error('请先填写 OpenRouter API Key');
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': window.location.origin,
+        'X-Title': 'AI Copy Matcher',
+      },
+      body: JSON.stringify({
+        model: selectedModelId,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error?.message || `OpenRouter Error: ${response.status}`);
+    }
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('OpenRouter 返回了空响应。');
+    return content;
+  };
+
   const handleAuditCopy = async (overrideText?: string) => {
     const textToProcess = overrideText || copywriting;
     if (!textToProcess) return;
@@ -990,34 +1046,23 @@ export default function App() {
     setRetryStatus(null);
     setAuditResults([]);
     setCopiedAuditTextKeys(new Set());
-    setActiveModelId("gemini-3-flash-preview");
-    setAuditProgress("校验中…");
+    setActiveModelId(matchingEngine === 'gemini' ? 'gemini-2.5-flash' : selectedModelId);
+    setAuditProgress('校验中…');
 
     try {
-      // Server-side audit is now the canonical source of corrected copy.
-      // It returns a sessionId that Hermes later fetches to match images against.
-      const token = localStorage.getItem('access-token') || '';
-      const res = await fetch('/api/audit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
-        body: JSON.stringify({
-          copy: textToProcess,
-          options: Array.from(selectedAuditOptions),
-          instructions: auditInstructions,
-        }),
-      });
-      if (res.status === 401) {
-        localStorage.removeItem('access-token');
-        setAccessToken(null);
-        throw new Error('登录已过期，请重新输入访问码');
-      }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `API error ${res.status}`);
-      }
-      const data = await res.json();
-      setSessionId(data.sessionId);
-      setAuditResults(data.results);
+      const callModel = matchingEngine === 'gemini' ? callGeminiDirect : callOpenRouterText;
+      const results = await runCopyAudit(
+        textToProcess,
+        Array.from(selectedAuditOptions),
+        auditInstructions,
+        (prompt) => callWithRetry(
+          () => callModel(prompt),
+          3, 2000,
+          (attempt, nextIn) => setRetryStatus({ attempt, total: 3, nextRetryIn: nextIn })
+        ),
+        (batch, total) => setAuditProgress(`${batch} / ${total}`)
+      );
+      setAuditResults(results);
 
       if (images.length > 0) await matchImagesWithCopy();
     } catch (error: any) {
@@ -1166,120 +1211,6 @@ export default function App() {
       });
       return next;
     });
-  };
-
-  // Pull the matchMap Hermes wrote back for this session and merge it into the
-  // review grid so the human can visually verify image↔copy correctness.
-  const loadHermesMatch = async () => {
-    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
-    setIsLoadingMatch(true);
-    try {
-      const token = localStorage.getItem('access-token') || '';
-      const res = await fetch(`/api/session/${sessionId}/match`, {
-        headers: { 'x-access-token': token },
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `加载失败 ${res.status}`);
-      }
-      const data = await res.json();
-      const incoming: MatchMap = data.matchMap || {};
-      if (Object.keys(incoming).length === 0) {
-        alert('Hermes 尚未为该 session 写入匹配结果。');
-        return;
-      }
-      setMatchMap(prev => ({ ...prev, ...incoming }));
-      const missing = Object.values(incoming).filter(name => !fileByName[name]);
-      if (missing.length > 0) {
-        alert(`已载入 ${Object.keys(incoming).length} 条匹配，但有 ${missing.length} 个文件名不在当前图片库（可能选错文件夹）：\n${missing.slice(0, 5).join('\n')}`);
-      }
-    } catch (e: any) {
-      alert(`载入 Hermes 匹配失败：${e.message}`);
-    } finally {
-      setIsLoadingMatch(false);
-    }
-  };
-
-  // Upload the locally-selected image folder to GCS (under the session) so a
-  // remote Hermes can read them. Browser PUTs directly to GCS via signed URLs.
-  const uploadImagesForHermes = async () => {
-    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
-    if (libraryImages.length === 0) { alert('请先在右侧选择图片库文件夹。'); return; }
-    setIsUploading(true);
-    setUploadProgress(`0 / ${libraryImages.length}`);
-    try {
-      const token = localStorage.getItem('access-token') || '';
-      const res = await fetch(`/api/session/${sessionId}/upload-urls`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
-        body: JSON.stringify({
-          files: libraryImages.map(img => ({
-            name: img.name,
-            contentType: img.file.type || 'image/jpeg',
-          })),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `获取上传地址失败 ${res.status}`);
-      }
-      const { uploads } = await res.json();
-      const urlByName: Record<string, { uploadUrl: string; contentType: string }> = {};
-      for (const u of uploads) urlByName[u.name] = u;
-
-      let done = 0;
-      // Upload with limited concurrency to keep things stable on big folders.
-      const queue = [...libraryImages];
-      const worker = async () => {
-        while (queue.length) {
-          const img = queue.shift()!;
-          const u = urlByName[img.name];
-          const put = await fetch(u.uploadUrl, {
-            method: 'PUT',
-            headers: { 'Content-Type': u.contentType },
-            body: img.file,
-          });
-          if (!put.ok) throw new Error(`上传 ${img.name} 失败 (${put.status})`);
-          done++;
-          setUploadProgress(`${done} / ${libraryImages.length}`);
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(4, libraryImages.length) }, worker));
-      alert(`已上传 ${done} 张图片，可让远程 Hermes 用 session ${sessionId} 匹配了。`);
-    } catch (e: any) {
-      alert(`上传失败：${e.message}`);
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(null);
-    }
-  };
-
-  // Write the human-confirmed (possibly hand-corrected) matchMap back so Hermes
-  // can pull the final result and download images for downstream processing.
-  const confirmMatch = async () => {
-    if (!sessionId) { alert('请先完成一次文案校验（生成 session）。'); return; }
-    const matched = auditResults.filter(r => matchMap[r.id]);
-    if (matched.length === 0) { alert('当前没有任何匹配可确认。'); return; }
-    setIsConfirming(true);
-    try {
-      const token = localStorage.getItem('access-token') || '';
-      const finalMap: MatchMap = {};
-      for (const r of auditResults) if (matchMap[r.id]) finalMap[r.id] = matchMap[r.id];
-      const res = await fetch(`/api/session/${sessionId}/confirm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-access-token': token },
-        body: JSON.stringify({ matchMap: finalMap }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || `确认失败 ${res.status}`);
-      }
-      alert(`已确认 ${matched.length} 条匹配。Hermes 现在可执行 finalize 下载成品。`);
-    } catch (e: any) {
-      alert(`确认失败：${e.message}`);
-    } finally {
-      setIsConfirming(false);
-    }
   };
 
   const bundleDownload = (format: 'tsv' | 'json') => {
@@ -1728,7 +1659,7 @@ export default function App() {
                   <div className="space-y-3">
                     <h2 className="text-[10px] font-black text-neutral-400 uppercase tracking-widest flex items-center gap-2">
                       <Settings2 className="w-3 h-3" />
-                      匹配引擎配置
+                      AI 引擎配置（文案质检 + 图片匹配）
                     </h2>
                     <div className="flex gap-1 bg-neutral-100 p-1 rounded-xl">
                       <button 
@@ -1756,10 +1687,10 @@ export default function App() {
                             type="password"
                             value={geminiApiKey}
                             onChange={(e) => saveGeminiKey(e.target.value)}
-                            placeholder="Gemini API Key (可选)"
+                            placeholder="Gemini API Key（文案质检必填）"
                             className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[10px] outline-none bg-neutral-50 focus:ring-2 focus:ring-blue-500"
                           />
-                          <button 
+                          <button
                             onClick={handleSelectKey}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded-md transition-all"
                             title="从 Google Cloud 项目选择密钥"
@@ -1768,7 +1699,7 @@ export default function App() {
                           </button>
                         </div>
                         <p className="text-[8px] text-neutral-400 px-1">
-                          留空则使用系统默认密钥。点击右侧图标可授权专业版密钥。
+                          文案质检需要你自己的 Gemini API Key（在 Google AI Studio 免费获取）；图片匹配留空则使用系统默认密钥。
                         </p>
                       </div>
                     )}
@@ -2248,17 +2179,6 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex gap-4 items-center">
-                        {sessionId && (
-                          <button
-                            onClick={() => copyToClipboard(sessionId)}
-                            className="text-[11px] font-mono text-neutral-600 bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-all"
-                            title="复制完整 Session ID，交给 Hermes 用于匹配本次校验后的文案"
-                          >
-                            <span className="text-neutral-400 font-sans">Session</span>
-                            {sessionId.slice(0, 6)}…{sessionId.slice(-4)}
-                            <Copy className="w-3 h-3 text-neutral-400" />
-                          </button>
-                        )}
                         {selectedAuditIds.size > 0 && (
                           <button
                             onClick={() => {
@@ -2275,33 +2195,6 @@ export default function App() {
                             复制英文到 Sheet ({selectedAuditIds.size})
                           </button>
                         )}
-                        <button
-                          onClick={uploadImagesForHermes}
-                          disabled={!sessionId || isUploading || libraryImages.length === 0}
-                          className="text-xs font-bold text-sky-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
-                          title="把当前图片库上传到云端，供远程 Hermes 匹配"
-                        >
-                          {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                          {isUploading ? `上传中 ${uploadProgress ?? ''}` : '上传图片供 Hermes'}
-                        </button>
-                        <button
-                          onClick={loadHermesMatch}
-                          disabled={!sessionId || isLoadingMatch}
-                          className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
-                          title="拉取 Hermes 为本次 session 写回的图文匹配，供你视觉校验"
-                        >
-                          {isLoadingMatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadCloud className="w-3.5 h-3.5" />}
-                          {isLoadingMatch ? '载入中…' : '载入 Hermes 匹配'}
-                        </button>
-                        <button
-                          onClick={confirmMatch}
-                          disabled={!sessionId || isConfirming}
-                          className="text-xs font-bold text-emerald-600 hover:underline flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
-                          title="确认当前图文匹配（含手动纠错），供 Hermes 下载成品"
-                        >
-                          {isConfirming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                          {isConfirming ? '确认中…' : '确认匹配'}
-                        </button>
                         <button
                           onClick={randomMatch}
                           disabled={libraryImages.length === 0}
