@@ -147,12 +147,59 @@ __INSTR__
 请以 JSON 数组格式返回结果。
 示例格式：[{"id": "1", "originalEnglish": "...", "markupEnglish": "...", "correctedEnglish": "..."}]`;
 
+// LLMs occasionally emit a literal control character (most often a raw newline)
+// inside a JSON string value instead of the escaped form (\n), which JSON.parse
+// rejects with "Bad control character in string literal". Escape control chars
+// that fall strictly inside double-quoted strings before parsing.
+function escapeControlCharsInStrings(input: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    const code = input.charCodeAt(i);
+    if (inString && !escaped && code < 0x20) {
+      switch (ch) {
+        case '\n': result += '\\n'; break;
+        case '\r': result += '\\r'; break;
+        case '\t': result += '\\t'; break;
+        case '\b': result += '\\b'; break;
+        case '\f': result += '\\f'; break;
+        default: result += '\\u' + code.toString(16).padStart(4, '0');
+      }
+      continue;
+    }
+    result += ch;
+    if (inString) {
+      escaped = !escaped && ch === '\\';
+      if (!escaped && ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    }
+  }
+  return result;
+}
+
 export function parseAuditJson(text: string): any[] {
   let clean = text.replace(/^```json\n?/, '').replace(/```\s*$/, '').trim();
   const start = clean.indexOf('[');
   const end = clean.lastIndexOf(']');
   if (start !== -1 && end !== -1) clean = clean.slice(start, end + 1);
-  return JSON.parse(clean);
+
+  try {
+    return JSON.parse(clean);
+  } catch (firstErr: any) {
+    try {
+      return JSON.parse(escapeControlCharsInStrings(clean));
+    } catch (secondErr: any) {
+      const m = String(secondErr.message || '').match(/position (\d+)/);
+      const pos = m ? Number(m[1]) : -1;
+      const snippet = pos >= 0
+        ? clean.slice(Math.max(0, pos - 80), pos + 80)
+        : clean.slice(0, 200);
+      throw new Error(`AI 返回的 JSON 格式无效：${secondErr.message}。附近内容：${JSON.stringify(snippet)}`);
+    }
+  }
 }
 
 const BATCH_SIZE = 15;

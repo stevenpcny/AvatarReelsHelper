@@ -18,7 +18,7 @@ import {
   loadMatchMap, saveMatchMap, INTERNAL_IMAGE_MIME,
   type MatchMap, type LoadedImage,
 } from './utils/imageMatch';
-import { runCopyAudit } from './utils/copyAudit';
+import { runCopyAudit, parseCopy, hasChinese } from './utils/copyAudit';
 import JSZip from 'jszip';
 
 interface ImageItem {
@@ -200,6 +200,7 @@ export default function App() {
     correctedEnglish: string;
     qcEnglishHasChinese?: boolean;
   }[]>([]);
+  const [auditSkippedAI, setAuditSkippedAI] = useState(false);
   const [autoMatchWithImages, setAutoMatchWithImages] = useState(false);
   const [autoOptimizeImages, setAutoOptimizeImages] = useState(false);
   const [selectedAuditOptions, setSelectedAuditOptions] = useState<Set<string>>(new Set(['spelling', 'case', 'punctuation', 'sequence']));
@@ -268,9 +269,10 @@ export default function App() {
   const [editingAuditId, setEditingAuditId] = useState<string | null>(null);
   const [tempAuditInstruction, setTempAuditInstruction] = useState('');
   const [showAuditModal, setShowAuditModal] = useState(false);
-  const [matchingEngine, setMatchingEngine] = useState<'gemini' | 'openrouter'>('gemini');
+  const [matchingEngine, setMatchingEngine] = useState<'gemini' | 'openrouter' | 'meta'>('gemini');
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [openRouterApiKey, setOpenRouterApiKey] = useState('');
+  const [metaApiKey, setMetaApiKey] = useState('');
   const [openRouterModels, setOpenRouterModels] = useState<any[]>([]);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('google/gemini-flash-1.5-exp:free');
@@ -370,6 +372,9 @@ export default function App() {
     const savedGeminiKey = localStorage.getItem('gemini-api-key');
     if (savedGeminiKey) setGeminiApiKey(savedGeminiKey);
 
+    const savedMetaKey = localStorage.getItem('meta-api-key');
+    if (savedMetaKey) setMetaApiKey(savedMetaKey);
+
     const savedCopywriting = localStorage.getItem('copy-matcher-copywriting');
     if (savedCopywriting) setCopywriting(savedCopywriting);
 
@@ -419,7 +424,7 @@ export default function App() {
     if (savedAutoOptimize) setAutoOptimizeImages(JSON.parse(savedAutoOptimize));
 
     const savedEngine = localStorage.getItem('copy-matcher-engine');
-    if (savedEngine) setMatchingEngine(savedEngine as 'gemini' | 'openrouter');
+    if (savedEngine) setMatchingEngine(savedEngine as 'gemini' | 'openrouter' | 'meta');
 
     const savedModel = localStorage.getItem('copy-matcher-model');
     if (savedModel) setSelectedModelId(savedModel);
@@ -589,6 +594,11 @@ export default function App() {
   const saveGeminiKey = (key: string) => {
     setGeminiApiKey(key);
     localStorage.setItem('gemini-api-key', key);
+  };
+
+  const saveMetaKey = (key: string) => {
+    setMetaApiKey(key);
+    localStorage.setItem('meta-api-key', key);
   };
 
   const saveSkills = (updatedSkills: Skill[]) => {
@@ -1036,6 +1046,42 @@ export default function App() {
     return content;
   };
 
+  const META_API_URL = 'https://api.meta.ai/v1/chat/completions';
+  const META_MODEL_ID = 'muse-spark-1.1';
+
+  // Meta AI Model API — OpenAI-compatible chat completions endpoint.
+  const callMetaText = async (prompt: string): Promise<string> => {
+    if (!metaApiKey) throw new Error('请先填写 Meta AI API Key');
+    const response = await fetch(META_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${metaApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: META_MODEL_ID,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error?.message || `Meta AI Error: ${response.status}`);
+    }
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Meta AI 返回了空响应。');
+    return content;
+  };
+
+  // No user API key for the selected engine → formatting-only mode: parse &
+  // segment locally, skip the AI audit call entirely.
+  const hasAuditKey = matchingEngine === 'gemini'
+    ? !!geminiApiKey
+    : matchingEngine === 'meta'
+    ? !!metaApiKey
+    : !!(openRouterApiKey || getOpenRouterApiKey());
+
   const handleAuditCopy = async (overrideText?: string) => {
     const textToProcess = overrideText || copywriting;
     if (!textToProcess) return;
@@ -1046,11 +1092,48 @@ export default function App() {
     setRetryStatus(null);
     setAuditResults([]);
     setCopiedAuditTextKeys(new Set());
-    setActiveModelId(matchingEngine === 'gemini' ? 'gemini-2.5-flash' : selectedModelId);
+    setActiveModelId(
+      matchingEngine === 'gemini' ? 'gemini-2.5-flash'
+      : matchingEngine === 'meta' ? META_MODEL_ID
+      : selectedModelId
+    );
+    setAuditSkippedAI(!hasAuditKey);
+
+    if (!hasAuditKey) {
+      setAuditProgress('排版中…');
+      try {
+        const results = parseCopy(textToProcess)
+          .filter((s) => s.english.trim() || s.chinese.trim())
+          .map((s) => ({
+            id: s.id,
+            chinese: s.chinese,
+            originalEnglish: s.english,
+            markupEnglish: s.english,
+            correctedEnglish: s.english,
+            qcEnglishHasChinese: hasChinese(s.english),
+          }));
+        setAuditResults(results);
+
+        if (images.length > 0) await matchImagesWithCopy();
+      } catch (error: any) {
+        const normalized = normalizeError(error);
+        setAuditError(normalized.suggestion);
+        setAuditTechnicalError(normalized);
+      } finally {
+        setIsAuditing(false);
+        setAuditProgress(null);
+        setRetryStatus(null);
+      }
+      return;
+    }
+
     setAuditProgress('校验中…');
 
     try {
-      const callModel = matchingEngine === 'gemini' ? callGeminiDirect : callOpenRouterText;
+      const callModel =
+        matchingEngine === 'gemini' ? callGeminiDirect
+        : matchingEngine === 'meta' ? callMetaText
+        : callOpenRouterText;
       const results = await runCopyAudit(
         textToProcess,
         Array.from(selectedAuditOptions),
@@ -1491,34 +1574,39 @@ export default function App() {
             );
             return JSON.parse(response.text);
           } else {
-            // OpenRouter Logic... (Keep existing)
-            const apiKey = openRouterApiKey || getOpenRouterApiKey();
-            if (!apiKey) throw new Error("请先填写 OpenRouter API Key");
+            // OpenAI-compatible chat completions: OpenRouter or Meta AI.
+            const isMeta = matchingEngine === 'meta';
+            const apiKey = isMeta ? metaApiKey : (openRouterApiKey || getOpenRouterApiKey());
+            if (!apiKey) throw new Error(isMeta ? "请先填写 Meta AI API Key" : "请先填写 OpenRouter API Key");
+            const engineName = isMeta ? "Meta AI" : "OpenRouter";
             const contentParts: any[] = [ { type: "text", text: prompt } ];
             currentImagesBatch.forEach(img => {
               contentParts.push({ type: "image_url", image_url: { url: img.original } });
             });
-            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            const headers: Record<string, string> = {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            };
+            if (!isMeta) {
+              headers["HTTP-Referer"] = window.location.origin;
+              headers["X-Title"] = "AI Copy Matcher";
+            }
+            const response = await fetch(isMeta ? META_API_URL : "https://openrouter.ai/api/v1/chat/completions", {
               method: "POST",
-              headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": window.location.origin,
-                "X-Title": "AI Copy Matcher"
-              },
+              headers,
               body: JSON.stringify({
-                model: selectedModelId,
+                model: isMeta ? META_MODEL_ID : selectedModelId,
                 messages: [{ role: "user", content: contentParts }],
                 response_format: { type: "json_object" }
               })
             });
             if (!response.ok) {
               const errorData = await response.json();
-              throw new Error(errorData.error?.message || `OpenRouter Error: ${response.status}`);
+              throw new Error(errorData.error?.message || `${engineName} Error: ${response.status}`);
             }
             const data = await response.json();
             if (!data.choices?.[0]?.message?.content) {
-              throw new Error("OpenRouter 返回了空响应。");
+              throw new Error(`${engineName} 返回了空响应。`);
             }
             const content = data.choices[0].message.content;
             const parsed = JSON.parse(content);
@@ -1678,6 +1766,14 @@ export default function App() {
                       >
                         OpenRouter
                       </button>
+                      <button
+                        onClick={() => setMatchingEngine('meta')}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          matchingEngine === 'meta' ? 'bg-white text-blue-600 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+                        }`}
+                      >
+                        Meta AI
+                      </button>
                     </div>
 
                     {matchingEngine === 'gemini' && (
@@ -1687,7 +1783,7 @@ export default function App() {
                             type="password"
                             value={geminiApiKey}
                             onChange={(e) => saveGeminiKey(e.target.value)}
-                            placeholder="Gemini API Key（文案质检必填）"
+                            placeholder="Gemini API Key（留空则仅排版，跳过 AI 质检）"
                             className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[10px] outline-none bg-neutral-50 focus:ring-2 focus:ring-blue-500"
                           />
                           <button
@@ -1699,7 +1795,7 @@ export default function App() {
                           </button>
                         </div>
                         <p className="text-[8px] text-neutral-400 px-1">
-                          文案质检需要你自己的 Gemini API Key（在 Google AI Studio 免费获取）；图片匹配留空则使用系统默认密钥。
+                          AI 质检需要你自己的 Gemini API Key（在 Google AI Studio 免费获取）；留空则仅做排版分段、不做 AI 质检。图片匹配留空时使用系统默认密钥。
                         </p>
                       </div>
                     )}
@@ -1733,6 +1829,21 @@ export default function App() {
                             {openRouterModelsError}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {matchingEngine === 'meta' && (
+                      <div className="space-y-2">
+                        <input
+                          type="password"
+                          value={metaApiKey}
+                          onChange={(e) => saveMetaKey(e.target.value)}
+                          placeholder="Meta AI API Key（留空则仅排版，跳过 AI 质检）"
+                          className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-[10px] outline-none bg-neutral-50 focus:ring-2 focus:ring-blue-500"
+                        />
+                        <p className="text-[8px] text-neutral-400 px-1">
+                          使用 Meta Model API（dev.meta.ai 获取 Key），模型 {META_MODEL_ID}；质检与图片匹配均直连 Meta API。
+                        </p>
                       </div>
                     )}
                   </div>
@@ -2026,14 +2137,14 @@ export default function App() {
                           <div className="flex flex-col items-center gap-0.5">
                             <div className="flex items-center gap-2">
                               <Loader2 className="w-4 h-4 animate-spin" />
-                              <span>正在质检 {auditProgress ? `(${auditProgress})` : ''}</span>
+                              <span>{auditSkippedAI ? '正在排版' : '正在质检'} {auditProgress ? `(${auditProgress})` : ''}</span>
                             </div>
                             {retryStatus && (
                               <span className="text-[10px] bg-red-500/20 px-2 py-0.5 rounded-full animate-pulse">
                                 重试中: 第 {retryStatus.attempt}/{retryStatus.total} 次 | {retryStatus.nextRetryIn}秒后
                               </span>
                             )}
-                            {activeModelId !== "gemini-3-flash-preview" && (
+                            {!auditSkippedAI && activeModelId !== "gemini-3-flash-preview" && (
                               <span className="text-[9px] opacity-70">已自动降级至备选模型加速处理</span>
                             )}
                           </div>
@@ -2045,7 +2156,9 @@ export default function App() {
                         ) : (
                           <>
                             <ShieldCheck className="w-4 h-4" />
-                            {images.length > 0 ? '开始质检 & 匹配' : '开始质检'}
+                            {hasAuditKey
+                              ? (images.length > 0 ? '开始质检 & 匹配' : '开始质检')
+                              : (images.length > 0 ? '仅排版 & 匹配（未填 Key）' : '仅排版（未填 Key，跳过质检）')}
                           </>
                         )}
                       </button>
@@ -2172,6 +2285,11 @@ export default function App() {
                           <h3 className="text-sm font-bold text-neutral-800 flex items-center gap-2">
                             <CheckCircle2 className="w-5 h-5 text-green-500" />
                             质检审查列表 ({auditResults.length})
+                            {auditSkippedAI && (
+                              <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                                仅排版 — 未填 API Key，未做 AI 质检
+                              </span>
+                            )}
                           </h3>
                           {lastSaved && (
                             <span className="text-[9px] text-neutral-400 mt-0.5">上次自动保存: {lastSaved}</span>
