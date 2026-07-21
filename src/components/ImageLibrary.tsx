@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, ChevronRight, ChevronLeft, AlertCircle, RefreshCcw } from 'lucide-react';
+import { FolderOpen, ChevronRight, ChevronLeft, ChevronDown, AlertCircle, RefreshCcw, FileArchive } from 'lucide-react';
 import {
   saveDirHandle, loadDirHandle, clearDirHandle,
-  ensureReadPermission, loadImagesFromDir, revokeImageUrls,
+  ensureReadPermission, loadImagesFromDir, loadImagesFromZip, revokeImageUrls,
   INTERNAL_IMAGE_MIME,
   type LoadedImage,
   type MatchMap,
@@ -37,7 +37,9 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
   const [needsPermission, setNeedsPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgSize, setImgSize] = useState<ImgSize>('md');
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
   const handleRef = useRef<any>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
 
   const refCount = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -142,6 +144,28 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
     }
   };
 
+  const pickZip = async (file: File) => {
+    setError(null);
+    try {
+      const { images: imgs, copywriting } = await loadImagesFromZip(file);
+      if (imgs.length === 0) {
+        setError('ZIP 中没有找到图片（支持 jpg/jpeg/png）。');
+        return;
+      }
+      // A zip is not backed by a directory handle — drop any persisted handle.
+      handleRef.current = null;
+      await clearDirHandle();
+      revokeImageUrls(images);
+      setImages(imgs);
+      setNeedsPermission(false);
+      onImagesLoaded(imgs);
+      onFolderName?.(file.name.replace(/\.zip$/i, ''));
+      if (copywriting && onCopywritingLoaded) onCopywritingLoaded(copywriting);
+    } catch (e: any) {
+      setError(e?.message ?? '解析 ZIP 失败');
+    }
+  };
+
   const grantPermission = async () => {
     if (!handleRef.current) return;
     const state = await ensureReadPermission(handleRef.current, true);
@@ -225,13 +249,48 @@ export function ImageLibrary({ matchMap, onImagesLoaded, onCopywritingLoaded, on
       </div>
 
       <div className="px-4 py-2 border-b border-neutral-100 flex flex-wrap gap-2">
-        <button
-          onClick={pickFolder}
-          className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-        >
-          <FolderOpen className="w-3 h-3" />
-          {images.length > 0 ? '更换文件夹' : '选择文件夹'}
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setImportMenuOpen(o => !o)}
+            className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+          >
+            <FolderOpen className="w-3 h-3" />
+            {images.length > 0 ? '更换图片' : '导入图片'}
+            <ChevronDown className="w-3 h-3" />
+          </button>
+          {importMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setImportMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-1 z-20 w-40 bg-white border border-neutral-200 rounded-lg shadow-lg overflow-hidden py-1">
+                <button
+                  onClick={() => { setImportMenuOpen(false); pickFolder(); }}
+                  className="w-full text-left text-[11px] font-bold text-neutral-700 hover:bg-blue-50 px-3 py-2 flex items-center gap-2"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-blue-500" />
+                  选择文件夹
+                </button>
+                <button
+                  onClick={() => { setImportMenuOpen(false); zipInputRef.current?.click(); }}
+                  className="w-full text-left text-[11px] font-bold text-neutral-700 hover:bg-purple-50 px-3 py-2 flex items-center gap-2"
+                >
+                  <FileArchive className="w-3.5 h-3.5 text-purple-500" />
+                  上传 ZIP
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) pickZip(file);
+          }}
+        />
         {images.length > 0 && (
           <button
             onClick={reload}

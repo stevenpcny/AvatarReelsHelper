@@ -102,5 +102,40 @@ export function revokeImageUrls(images: LoadedImage[]): void {
   for (const img of images) URL.revokeObjectURL(img.url);
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+};
+
+/** Extracts images (and, if present, the first .txt/.tsv as copywriting) from a zip File. */
+export async function loadImagesFromZip(
+  file: File
+): Promise<{ images: LoadedImage[]; copywriting?: string }> {
+  const { default: JSZip } = await import('jszip');
+  const zip = await JSZip.loadAsync(file);
+  const out: LoadedImage[] = [];
+  let copywriting: string | undefined;
+
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir) continue;
+    const base = entry.name.split('/').pop() ?? entry.name;
+    if (base.startsWith('._') || base.startsWith('.') || entry.name.startsWith('__MACOSX/')) continue;
+
+    const extMatch = base.match(IMAGE_EXT);
+    if (extMatch) {
+      const ext = extMatch[1].toLowerCase();
+      const blob = await entry.async('blob');
+      const typed = new File([blob], base, { type: MIME_BY_EXT[ext] ?? blob.type });
+      out.push({ name: base, file: typed, url: URL.createObjectURL(typed) });
+    } else if (copywriting === undefined && /\.(txt|tsv)$/i.test(base)) {
+      copywriting = await entry.async('string');
+    }
+  }
+
+  out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return { images: out, copywriting };
+}
+
 /** Internal mime used to pass an image filename between our own DOM elements. */
 export const INTERNAL_IMAGE_MIME = 'application/x-arh-image-name';

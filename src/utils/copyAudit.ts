@@ -70,7 +70,19 @@ export function parseCopy(text: string): CopySegment[] {
       let english = '';
       if (tabIdx !== -1) {
         chinese = stripQuotes(withoutId.slice(0, tabIdx));
-        english = collapseWs(stripQuotes(withoutId.slice(tabIdx + 1)));
+        // A well-formed TSV row is `id \t chinese \t english` (2 tabs max). Take
+        // only the second column as english; drop any further tab-separated
+        // columns, which come from a malformed row glued on without a newline.
+        const afterChinese = withoutId.slice(tabIdx + 1);
+        const nextTab = afterChinese.indexOf('\t');
+        let englishField = afterChinese;
+        if (nextTab !== -1) {
+          // Malformed row: another record was glued on with no newline, so its
+          // leading id-digits stuck to this english (e.g. "...Satan.1"). Drop the
+          // extra columns, then the leaked id left after sentence punctuation.
+          englishField = afterChinese.slice(0, nextTab).replace(/([.!?])\d+$/, '$1');
+        }
+        english = collapseWs(stripQuotes(englishField));
       } else if (CHINESE_TEST.test(withoutId)) {
         chinese = stripQuotes(withoutId);
       } else {

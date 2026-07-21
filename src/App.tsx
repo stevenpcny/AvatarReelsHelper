@@ -192,6 +192,7 @@ export default function App() {
   const [currentBatchSize, setCurrentBatchSize] = useState(15);
   const [activeModelId, setActiveModelId] = useState("gemini-3-flash-preview");
   const [downloadFolder, setDownloadFolder] = useState('');
+  const [customBundleName, setCustomBundleName] = useState('');
   const [auditResults, setAuditResults] = useState<{
     id: string;
     chinese: string;
@@ -1342,9 +1343,12 @@ export default function App() {
         if (!img) continue;
         matchedNames.add(img.name);
         const ext = img.name.match(/\.(jpe?g|png|gif|webp)$/i)?.[1] ?? 'jpg';
-        const label = sanitizeFilename(normalizeChinese(r.chinese));
+        const custom = sanitizeFilename(customBundleName);
+        const outName = custom
+          ? `${custom}-${r.id}`
+          : `${r.id}_${sanitizeFilename(normalizeChinese(r.chinese))}`;
         const buf = await fetch(img.url).then(res => res.arrayBuffer());
-        images.file(`${r.id}_${label}.${ext}`, buf);
+        images.file(`${outName}.${ext}`, buf);
       }
 
       // 3. unmatched images — original filename
@@ -1381,6 +1385,14 @@ export default function App() {
       setAuditInstructions(prev => ({ ...prev, [editingAuditId]: tempAuditInstruction }));
     }
     setShowAuditModal(false);
+  };
+
+  const updateCorrectedEnglish = (id: string, value: string) => {
+    setAuditResults(prev => prev.map(r =>
+      r.id === id
+        ? { ...r, correctedEnglish: value, qcEnglishHasChinese: hasChinese(value) }
+        : r
+    ));
   };
 
   const editSkill = (skill: Skill) => {
@@ -2322,6 +2334,14 @@ export default function App() {
                           <Shuffle className="w-3.5 h-3.5" />
                           随机匹配
                         </button>
+                        <input
+                          type="text"
+                          value={customBundleName}
+                          onChange={(e) => setCustomBundleName(e.target.value)}
+                          placeholder="自定义名称（留空用原命名）"
+                          title="填写后，ZIP 里匹配图命名为「自定义名称-序号」；留空则保持原「序号_中文」命名"
+                          className="text-xs font-medium text-neutral-700 outline-none border border-neutral-200 rounded-lg px-2.5 py-1.5 w-52 focus:border-blue-400"
+                        />
                         <button
                           onClick={() => bundleDownload('tsv')}
                           disabled={isBundling}
@@ -2443,19 +2463,16 @@ export default function App() {
                             {/* Corrected */}
                             <div className="space-y-1 group">
                               <div className="flex items-center justify-between">
-                                <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">修正结果</span>
+                                <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">修正结果 · 可编辑</span>
                                 <CopyButton text={res.correctedEnglish} />
                               </div>
-                              <CopyableText
-                                text={res.correctedEnglish}
-                                className="rounded-xl"
-                                hasBeenCopied={copiedAuditTextKeys.has(`${res.id}:corrected`)}
-                                onCopy={() => setCopiedAuditTextKeys(prev => new Set(prev).add(`${res.id}:corrected`))}
-                              >
-                                <div className="px-3 py-2 bg-blue-50/30 rounded-xl border border-blue-100 text-xs font-medium leading-relaxed text-neutral-800 min-h-[56px]">
-                                  {res.correctedEnglish}
-                                </div>
-                              </CopyableText>
+                              <textarea
+                                value={res.correctedEnglish}
+                                onChange={(e) => updateCorrectedEnglish(res.id, e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                spellCheck={false}
+                                className="w-full px-3 py-2 bg-blue-50/30 rounded-xl border border-blue-100 text-xs font-medium leading-relaxed text-neutral-800 min-h-[56px] max-h-[60vh] overflow-y-auto resize-y outline-none cursor-text focus:border-blue-400 focus:bg-white transition-colors [field-sizing:content]"
+                              />
                             </div>
                           </div>
                         </div>
