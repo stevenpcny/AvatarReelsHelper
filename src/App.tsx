@@ -277,6 +277,9 @@ export default function App() {
   const [openRouterModels, setOpenRouterModels] = useState<any[]>([]);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('google/gemini-flash-1.5-exp:free');
+  const [geminiModels, setGeminiModels] = useState<{ id: string; label: string }[]>([]);
+  const [geminiModelsError, setGeminiModelsError] = useState<string | null>(null);
+  const [selectedGeminiModel, setSelectedGeminiModel] = useState('gemini-2.5-flash');
   const [customMatchingRules, setCustomMatchingRules] = useState('只要情绪不冲突即可，不需要精确意境匹配：严肃/沉重的文案不要配欢笑、搞笑的图，轻松/喜乐的文案不要配悲伤、压抑的图，基调不矛盾即可。例外：如果文案是关于祷告的，就配祷告的图。');
   const [viewMode, setViewMode] = useState<'grid' | 'edit'>('grid');
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
@@ -350,6 +353,42 @@ export default function App() {
     };
     fetchModels();
   }, []);
+
+  // Fetch the Gemini model list for the audit dropdown, using the user's own key.
+  // Runs whenever the key changes so newly-released models (e.g. 3.x) appear automatically.
+  useEffect(() => {
+    if (matchingEngine !== 'gemini' || !geminiApiKey) return;
+    let cancelled = false;
+    (async () => {
+      setGeminiModelsError(null);
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const models = (data.models ?? [])
+          .filter((m: any) =>
+            m.supportedGenerationMethods?.includes('generateContent') &&
+            /(^|\/)gemini/i.test(m.name) &&
+            !/embedding|aqa|imagen|image-generation|tts|native-audio/i.test(m.name)
+          )
+          .map((m: any) => {
+            const id = m.name.replace(/^models\//, '');
+            return { id, label: m.displayName ? `${m.displayName} (${id})` : id };
+          })
+          .sort((a: { id: string }, b: { id: string }) =>
+            b.id.localeCompare(a.id, undefined, { numeric: true })
+          );
+        if (cancelled) return;
+        setGeminiModels(models);
+        setSelectedGeminiModel(prev =>
+          models.some((m: { id: string }) => m.id === prev) ? prev : (models[0]?.id ?? prev)
+        );
+      } catch (e) {
+        if (!cancelled) setGeminiModelsError('加载 Gemini 模型列表失败，使用默认模型质检。');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [geminiApiKey, matchingEngine]);
 
   // Load skills and API Keys from localStorage on mount
   useEffect(() => {
@@ -429,6 +468,9 @@ export default function App() {
 
     const savedModel = localStorage.getItem('copy-matcher-model');
     if (savedModel) setSelectedModelId(savedModel);
+
+    const savedGeminiModel = localStorage.getItem('copy-matcher-gemini-model');
+    if (savedGeminiModel) setSelectedGeminiModel(savedGeminiModel);
 
     const savedImages = localStorage.getItem('copy-matcher-images');
     if (savedImages) {
@@ -577,6 +619,14 @@ export default function App() {
       console.warn("Failed to save model setting", e);
     }
   }, [selectedModelId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('copy-matcher-gemini-model', selectedGeminiModel);
+    } catch (e) {
+      console.warn("Failed to save Gemini model setting", e);
+    }
+  }, [selectedGeminiModel]);
 
   useEffect(() => {
     try {
@@ -990,7 +1040,8 @@ export default function App() {
   // Calls the public Gemini API directly with the user's own key — no Vertex/backend involved.
   const callGeminiDirect = async (prompt: string): Promise<string> => {
     if (!geminiApiKey) throw new Error('请先填写 Gemini API Key');
-    const candidates = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    const candidates = [selectedGeminiModel, 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+      .filter((m, i, a) => !!m && a.indexOf(m) === i);
     let lastErr: any = new Error('No models tried');
     for (const model of candidates) {
       try {
@@ -1094,7 +1145,7 @@ export default function App() {
     setAuditResults([]);
     setCopiedAuditTextKeys(new Set());
     setActiveModelId(
-      matchingEngine === 'gemini' ? 'gemini-2.5-flash'
+      matchingEngine === 'gemini' ? selectedGeminiModel
       : matchingEngine === 'meta' ? META_MODEL_ID
       : selectedModelId
     );
@@ -1806,8 +1857,25 @@ export default function App() {
                             <RefreshCcw className="w-3 h-3" />
                           </button>
                         </div>
+                        <select
+                          value={selectedGeminiModel}
+                          onChange={(e) => setSelectedGeminiModel(e.target.value)}
+                          disabled={!geminiApiKey}
+                          title="质检使用的 Gemini 模型（填入 API Key 后自动加载可用列表，最新版在最上方）"
+                          className={`w-full px-3 py-2 rounded-xl border text-[10px] outline-none bg-neutral-50 disabled:opacity-50 ${geminiModelsError ? 'border-red-300 text-red-600' : 'border-neutral-200'}`}
+                        >
+                          {geminiModels.length > 0 ? (
+                            geminiModels.map(m => (
+                              <option key={m.id} value={m.id}>{m.label}</option>
+                            ))
+                          ) : (
+                            <option value={selectedGeminiModel}>
+                              {geminiApiKey ? (geminiModelsError ? `${selectedGeminiModel}（列表加载失败）` : '正在加载模型…') : '填入 Key 后加载模型列表'}
+                            </option>
+                          )}
+                        </select>
                         <p className="text-[8px] text-neutral-400 px-1">
-                          AI 质检需要你自己的 Gemini API Key（在 Google AI Studio 免费获取）；留空则仅做排版分段、不做 AI 质检。图片匹配留空时使用系统默认密钥。
+                          AI 质检需要你自己的 Gemini API Key（在 Google AI Studio 免费获取）；留空则仅做排版分段、不做 AI 质检。图片匹配留空时使用系统默认密钥。质检模型可在上方下拉选择，最新版排在最上方。
                         </p>
                       </div>
                     )}
